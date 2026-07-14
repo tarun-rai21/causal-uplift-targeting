@@ -1,0 +1,24 @@
+# config/default_config.yaml
+
+# Default pilot simulation configuration.
+# See config/schema.py for the validation rules this config must satisfy.
+
+n_users: 50000
+baseline_rate: 0.10
+propensity: 0.5
+seed: 42
+
+# Per-segment true treatment effect (added to baseline_rate for treated units
+# of that segment). Keys here MUST exactly match segment_mix keys.
+segment_effects:
+  persuadable: 0.15
+  sure_thing: 0.01
+  lost_cause: 0.0
+  sleeping_dog: -0.05
+
+# Population mix. Must sum to 1.0.
+segment_mix:
+  persuadable: 0.25
+  sure_thing: 0.25
+  lost_cause: 0.35
+  sleeping_dog: 0.15

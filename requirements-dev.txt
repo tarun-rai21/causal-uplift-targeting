@@ -1,0 +1,4 @@
+# requirements-dev.txt
+
+-r requirements.txt
+ruff==0.15.21

@@ -1,0 +1,26 @@
+# pyproject.toml
+
+[project]
+name = "causal-uplift-targeting"
+version = "0.1.0"
+description = "Uplift modeling for budget-constrained incentive targeting"
+requires-python = ">=3.11"
+readme = "README.md"
+
+[tool.pytest.ini_options]
+markers = [
+    "slow: statistical / simulation-based validation tests, excluded from default CI (run manually via scripts/run_validation_suite.sh)",
+]
+testpaths = ["tests", "validation"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
