@@ -1,5 +1,3 @@
-# config/default_config.yaml
-
 # Default pilot simulation configuration.
 # See config/schema.py for the validation rules this config must satisfy.
 
@@ -8,13 +6,25 @@ baseline_rate: 0.10
 propensity: 0.5
 seed: 42
 
-# Per-segment true treatment effect (added to baseline_rate for treated units
-# of that segment). Keys here MUST exactly match segment_mix keys.
+# Per-segment true treatment effect (added to that segment's CONTROL
+# probability for treated units). Keys here MUST exactly match segment_mix.
 segment_effects:
   persuadable: 0.15
   sure_thing: 0.01
   lost_cause: 0.0
   sleeping_dog: -0.05
+
+# Per-segment offset added to baseline_rate to get that segment's
+# CONTROL-arm conversion probability. Optional; unlisted segments default
+# to 0.0. This is what makes sure_thing genuinely look like a "sure thing"
+# (high conversion regardless of treatment) and lost_cause genuinely look
+# unreachable (low conversion regardless of treatment) -- without this,
+# the Phase 2 naive-propensity-model failure demo would be a strawman.
+segment_baseline_offsets:
+  persuadable: -0.02   # control prob = 0.08
+  sure_thing: 0.30     # control prob = 0.40 (high, converts regardless)
+  lost_cause: -0.08    # control prob = 0.02 (low, unreachable)
+  sleeping_dog: 0.05   # control prob = 0.15
 
 # Population mix. Must sum to 1.0.
 segment_mix:

@@ -5,54 +5,43 @@ This module exists because the original spec never specifies validation for
 simulator config, and every downstream phase (simulator, baseline, T-learner,
 X-learner, evaluation, validation harness) implicitly assumes the config it's
 handed is well-formed. Left unchecked, malformed config produces plausible-
-looking but wrong simulated data — the exact failure mode this entire project
-exists to detect in propensity modeling. It would undercut the project's own
-thesis to let it happen silently in our own config layer.
+looking but wrong simulated data -- the exact failure mode this entire
+project exists to detect in propensity modeling.
 
 Validation rules and why each one exists:
 
 1. segment_mix values must sum to 1.0 (within floating-point tolerance).
-   Without this, the simulator would silently under- or over-sample the
-   population (e.g., mix summing to 0.9 quietly drops 10% of the population
-   into an undefined segment, or numpy's np.random.choice raises a cryptic
-   error whose root cause is nowhere near this line).
 
 2. segment_effects and segment_mix must have exactly the same set of keys.
-   A segment present in one dict but not the other means either (a) a
-   segment gets a treatment effect but is never generated, or (b) a segment
-   gets generated but its treatment effect silently defaults to something
-   undefined -- both are silent-data-corruption bugs, not crashes.
 
-3. propensity must be strictly inside (0, 1) -- NOT inclusive of 0 or 1.
-   The X-learner's combination formula (Section 7.3) is
-   tau(x) = e(x)*g0(x) + (1-e(x))*g1(x). At e(x)=0 or e(x)=1, one entire arm
-   (treated or control) has zero observations, mu1 or mu0 cannot be fit at
-   all, and the "propensity-weighted combination" degenerates into an
-   undefined/zero-signal estimate for the entire model, not a boundary case
-   worth handling gracefully -- so we reject it at config time instead of
-   producing an inscrutable failure three phases downstream.
+3. propensity must be strictly inside (0, 1) -- not inclusive. The
+   X-learner's combination formula tau(x) = e(x)*g0(x) + (1-e(x))*g1(x)
+   degenerates at e(x)=0 or 1 (one entire arm has zero observations).
 
 4. baseline_rate must be inside (0, 1) -- it's a probability.
 
-5. n_users must be a positive integer, and should be large enough that the
-   rarest configured segment still has a meaningfully estimable sample size;
-   we warn (not error) below a heuristic threshold rather than hard-fail,
-   since a small deliberate test pilot is a legitimate use case.
+5. n_users must be positive; segments below a heuristic estimable-size
+   floor produce a warning (not an error).
 
-6. The three segments the spec calls "at minimum" (persuadable, sure_thing,
-   lost_cause) must be present. sleeping_dog is optional per spec Section 1.3.
+6. The three "at minimum" segments (persuadable, sure_thing, lost_cause)
+   must be present. sleeping_dog is optional.
 
-7. For every segment, baseline_rate + segment_effects[segment] must be
-   within [0, 1] -- unlike the propensity check (rule 3), this is a CLOSED
-   interval: a Bernoulli conversion probability of exactly 0 or 1 is
-   mathematically valid (a deterministic outcome for that user), it does
-   not break any downstream formula the way propensity=0 breaks the
-   X-learner's weighting. This rule exists because the simulator (Phase 1)
-   computes each treated user's conversion probability as
-   p0 + segment_effects[segment], and without this check a large positive
-   effect (or baseline_rate) combination would only surface as a cryptic
-   numpy error deep inside a Bernoulli draw, far from the config that
-   actually caused it.
+7. segment_baseline_offsets (optional; unlisted segments default to an
+   offset of 0.0) is added to baseline_rate to get each segment's
+   CONTROL-arm conversion probability. This exists because a single shared
+   baseline_rate across all segments would make the Phase 2 naive-model
+   failure demo a strawman: covariates would only correlate with
+   conversion via the treatment effect itself, diluted across the ~50%
+   control group, so the naive model would accidentally rank persuadables
+   highly instead of demonstrating its real failure (chasing "sure
+   things"). Any key present in segment_baseline_offsets must be a real
+   segment (subset of segment_mix's keys).
+
+8. For every segment: control probability (baseline_rate + offset) and
+   treated probability (control + segment_effects[segment]) must both be
+   within the CLOSED interval [0, 1]. Checked per-segment so the error
+   names exactly which segment and which arm (control vs. treated) is at
+   fault.
 """
 
 from __future__ import annotations
@@ -73,6 +62,7 @@ class PilotConfig(BaseModel):
 
     segment_effects: dict[str, float]
     segment_mix: dict[str, float]
+    segment_baseline_offsets: dict[str, float] = Field(default_factory=dict)
 
     @field_validator("segment_mix")
     @classmethod
@@ -109,6 +99,20 @@ class PilotConfig(BaseModel):
         return self
 
     @model_validator(mode="after")
+    def _baseline_offset_keys_are_known_segments(self) -> "PilotConfig":
+        mix_keys = set(self.segment_mix.keys())
+        offset_keys = set(self.segment_baseline_offsets.keys())
+        unknown = offset_keys - mix_keys
+        if unknown:
+            raise ValueError(
+                f"segment_baseline_offsets has segment(s) not present in "
+                f"segment_mix: {unknown}. segment_baseline_offsets is "
+                "optional per-segment (missing entries default to an "
+                "offset of 0.0), but any key present must be a real segment."
+            )
+        return self
+
+    @model_validator(mode="after")
     def _warn_on_thin_segments(self) -> "PilotConfig":
         thin_segments = [
             seg for seg, frac in self.segment_mix.items()
@@ -128,29 +132,32 @@ class PilotConfig(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def _treated_probability_stays_in_bounds(self) -> "PilotConfig":
-        """
-        For every segment, the treated conversion probability
-        (baseline_rate + segment_effects[segment]) must land in [0, 1].
-        Checked per-segment, not just against the largest/smallest effect,
-        so the error message names exactly which segment is at fault.
-        """
-        out_of_bounds = {}
-        for segment, effect in self.segment_effects.items():
-            treated_p = self.baseline_rate + effect
-            if not (0.0 <= treated_p <= 1.0):
-                out_of_bounds[segment] = treated_p
+    def _segment_probabilities_stay_in_bounds(self) -> "PilotConfig":
+        problems = []
+        for segment in self.segment_mix:
+            offset = self.segment_baseline_offsets.get(segment, 0.0)
+            control_p = self.baseline_rate + offset
+            treated_p = control_p + self.segment_effects[segment]
 
-        if out_of_bounds:
-            details = ", ".join(
-                f"{seg!r}: baseline_rate({self.baseline_rate}) + "
-                f"effect({self.segment_effects[seg]}) = {p:.4f}"
-                for seg, p in out_of_bounds.items()
-            )
+            if not (0.0 <= control_p <= 1.0):
+                problems.append(
+                    f"{segment!r} control probability = "
+                    f"baseline_rate({self.baseline_rate}) + offset({offset}) "
+                    f"= {control_p:.4f}"
+                )
+            if not (0.0 <= treated_p <= 1.0):
+                problems.append(
+                    f"{segment!r} treated probability = "
+                    f"control({control_p:.4f}) + "
+                    f"effect({self.segment_effects[segment]}) = {treated_p:.4f}"
+                )
+
+        if problems:
             raise ValueError(
-                "Treated conversion probability out of [0, 1] bounds for "
-                f"segment(s): {details}. Reduce baseline_rate or the "
-                "offending segment_effects value(s)."
+                "Segment conversion probability out of [0, 1] bounds: "
+                + "; ".join(problems)
+                + ". Adjust baseline_rate, segment_baseline_offsets, or "
+                "segment_effects."
             )
         return self
 
