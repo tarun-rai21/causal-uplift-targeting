@@ -1,5 +1,3 @@
-# tests/test_config_schema.py
-
 import pytest
 from pydantic import ValidationError
 
@@ -89,3 +87,43 @@ def test_load_pilot_config_from_default_yaml():
     cfg = load_pilot_config("config/default_config.yaml")
     assert cfg.n_users > 0
     assert set(cfg.segment_mix.keys()) == set(cfg.segment_effects.keys())
+
+
+def test_treated_probability_exceeding_one_is_rejected():
+    bad = dict(VALID_KWARGS)
+    bad["baseline_rate"] = 0.90
+    bad["segment_effects"] = {"persuadable": 0.15, "sure_thing": 0.01, "lost_cause": 0.0}
+    # persuadable treated prob = 0.90 + 0.15 = 1.05 -> invalid
+    with pytest.raises(ValidationError, match="out of \\[0, 1\\] bounds"):
+        PilotConfig(**bad)
+
+
+def test_treated_probability_below_zero_is_rejected():
+    bad = dict(VALID_KWARGS)
+    bad["baseline_rate"] = 0.02
+    bad["segment_effects"] = {"persuadable": 0.15, "sure_thing": 0.01, "lost_cause": -0.05}
+    # lost_cause treated prob = 0.02 + (-0.05) = -0.03 -> invalid
+    with pytest.raises(ValidationError, match="out of \\[0, 1\\] bounds"):
+        PilotConfig(**bad)
+
+
+def test_treated_probability_exactly_at_boundary_is_allowed():
+    """
+    Unlike propensity (strict open interval), treated probability uses a
+    CLOSED interval: exactly 0 or exactly 1 is a valid Bernoulli parameter
+    (a deterministic outcome), not a degenerate case that breaks a formula.
+    """
+    good = dict(VALID_KWARGS)
+    good["baseline_rate"] = 0.85
+    # persuadable treated prob = 0.85 + 0.15 = 1.00 exactly -> must be allowed
+    good["segment_effects"] = {"persuadable": 0.15, "sure_thing": 0.01, "lost_cause": 0.0}
+    cfg = PilotConfig(**good)
+    assert cfg.baseline_rate == 0.85
+
+
+def test_error_message_names_the_offending_segment():
+    bad = dict(VALID_KWARGS)
+    bad["baseline_rate"] = 0.95
+    bad["segment_effects"] = {"persuadable": 0.15, "sure_thing": 0.01, "lost_cause": 0.0}
+    with pytest.raises(ValidationError, match="'persuadable'"):
+        PilotConfig(**bad)

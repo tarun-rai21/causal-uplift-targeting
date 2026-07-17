@@ -1,5 +1,3 @@
-# config/schema.py
-
 """
 Validated configuration for the pilot simulator.
 
@@ -43,6 +41,18 @@ Validation rules and why each one exists:
 
 6. The three segments the spec calls "at minimum" (persuadable, sure_thing,
    lost_cause) must be present. sleeping_dog is optional per spec Section 1.3.
+
+7. For every segment, baseline_rate + segment_effects[segment] must be
+   within [0, 1] -- unlike the propensity check (rule 3), this is a CLOSED
+   interval: a Bernoulli conversion probability of exactly 0 or 1 is
+   mathematically valid (a deterministic outcome for that user), it does
+   not break any downstream formula the way propensity=0 breaks the
+   X-learner's weighting. This rule exists because the simulator (Phase 1)
+   computes each treated user's conversion probability as
+   p0 + segment_effects[segment], and without this check a large positive
+   effect (or baseline_rate) combination would only surface as a cryptic
+   numpy error deep inside a Bernoulli draw, far from the config that
+   actually caused it.
 """
 
 from __future__ import annotations
@@ -114,6 +124,33 @@ class PilotConfig(BaseModel):
                 "segments will be noisy; this is a warning, not an error, "
                 "since a small deliberate test pilot is a legitimate use case.",
                 stacklevel=2,
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _treated_probability_stays_in_bounds(self) -> "PilotConfig":
+        """
+        For every segment, the treated conversion probability
+        (baseline_rate + segment_effects[segment]) must land in [0, 1].
+        Checked per-segment, not just against the largest/smallest effect,
+        so the error message names exactly which segment is at fault.
+        """
+        out_of_bounds = {}
+        for segment, effect in self.segment_effects.items():
+            treated_p = self.baseline_rate + effect
+            if not (0.0 <= treated_p <= 1.0):
+                out_of_bounds[segment] = treated_p
+
+        if out_of_bounds:
+            details = ", ".join(
+                f"{seg!r}: baseline_rate({self.baseline_rate}) + "
+                f"effect({self.segment_effects[seg]}) = {p:.4f}"
+                for seg, p in out_of_bounds.items()
+            )
+            raise ValueError(
+                "Treated conversion probability out of [0, 1] bounds for "
+                f"segment(s): {details}. Reduce baseline_rate or the "
+                "offending segment_effects value(s)."
             )
         return self
 
