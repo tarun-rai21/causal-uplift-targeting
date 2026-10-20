@@ -30,10 +30,12 @@ def insert_pilot(engine, pilot_id: str, user_ids: Iterable[str]) -> None:
             ),
             {"p": pilot_id},
         )
-        conn.execute(
-            text(
-                "INSERT INTO users (user_id, signup_date, region, device_type) "
-                "VALUES (:u, '2023-01-01', 'north', 'mobile')"
-            ),
-            [{"u": u} for u in user_ids],
-        )
+        rows = [{"u": u} for u in user_ids]
+        if rows:
+            conn.execute(
+                text(
+                    "INSERT INTO users (user_id, signup_date, region, device_type) "
+                    "VALUES (:u, '2023-01-01', 'north', 'mobile')"
+                ),
+                rows,
+            )

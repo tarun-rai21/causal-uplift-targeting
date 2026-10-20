@@ -17,7 +17,8 @@ CREATE TABLE IF NOT EXISTS pilots (
     pilot_id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     start_date DATE NOT NULL,
-    budget_cap REAL                    -- max spend available for a real rollout
+    budget_cap REAL,                   -- max spend available for a real rollout
+    ground_truth_json TEXT             -- simulated pilots only: frozen GroundTruth; NULL on real data
 );
 
 CREATE TABLE IF NOT EXISTS treatment_assignment (

@@ -7,6 +7,7 @@ Run directly: `python -m db.seed`
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import datetime, timezone
 
@@ -32,6 +33,10 @@ def seed_demo_pilot(config_path: str = "config/default_config.yaml") -> str:
         "name": "Demo pilot (simulated)",
         "start_date": now.date(),
         "budget_cap": None,
+        # Persisted with the pilot so validation reads back the truth that
+        # was ACTUALLY used, instead of re-deriving it from a YAML file that
+        # may have changed since (see data_sim/ground_truth.py).
+        "ground_truth_json": json.dumps(ground_truth.to_dict(), sort_keys=True),
     }])
 
     # The simulator creates a brand-new synthetic population per call and

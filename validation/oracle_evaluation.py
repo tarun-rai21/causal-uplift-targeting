@@ -57,6 +57,21 @@ def true_incremental_outcome(
     return float(lookup.loc[list(user_ids)].sum())
 
 
+def covariate_ceiling_target_ids(
+    users_df: pd.DataFrame, ground_truth: GroundTruth, k: int
+) -> list[str]:
+    """
+    The best k-user target list achievable from observable covariates: the
+    top k by true E[tau | X]. Its true_incremental_outcome is the ceiling a
+    CATE model should be judged against -- NOT the segment-oracle top k,
+    which ranks by hidden segment membership no model can observe.
+    """
+    if not 0 < k <= len(users_df):
+        raise ValueError(f"k must be in [1, {len(users_df)}], got {k}")
+    cate_x = ground_truth.true_cate_given_covariates(users_df)
+    return cate_x.sort_values(ascending=False, kind="stable").head(k).index.tolist()
+
+
 def permutation_test_against_random(
     target_user_ids: Iterable[str],
     candidate_pool_ids: Iterable[str],

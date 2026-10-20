@@ -35,13 +35,14 @@ from data_sim.ground_truth import GroundTruth
 
 # Per-segment mean historical_spend, used to give covariates a realistic,
 # overlapping (not perfectly separable) correlation with segment.
-# Unrecognized segment names fall back to a neutral mean.
+# Unrecognized segment names fall back to _DEFAULT_SPEND_MEAN.
 _SEGMENT_SPEND_MEAN = {
     "persuadable": 120.0,
     "sure_thing": 200.0,
     "lost_cause": 60.0,
     "sleeping_dog": 90.0,
 }
+_DEFAULT_SPEND_MEAN = 100.0
 _SPEND_NOISE_STD = 80.0  # deliberately large relative to the mean gaps above
 
 
@@ -57,9 +58,9 @@ class PilotSimulator:
         rng = np.random.default_rng(cfg.seed)
         n = cfg.n_users
 
-        # Built first so the per-segment probabilities below are read from
-        # the same object that is returned as the record of truth, rather
-        # than recomputed separately and risking drift between the two.
+        # Built first so the per-segment probabilities and spend means below
+        # are read from the same object that is returned as the record of
+        # truth, rather than recomputed separately and risking drift.
         ground_truth = GroundTruth(
             baseline_rate=cfg.baseline_rate,
             propensity=cfg.propensity,
@@ -67,6 +68,10 @@ class PilotSimulator:
             segment_effects=cfg.segment_effects,
             segment_baseline_offsets=cfg.segment_baseline_offsets,
             seed=cfg.seed,
+            spend_means={
+                s: _SEGMENT_SPEND_MEAN.get(s, _DEFAULT_SPEND_MEAN) for s in cfg.segment_mix
+            },
+            spend_noise_std=_SPEND_NOISE_STD,
         )
 
         segments = np.array(list(cfg.segment_mix.keys()))
@@ -79,7 +84,9 @@ class PilotSimulator:
             "user_id": user_ids,
             "signup_date": self._generate_signup_dates(n, rng),
             "segment": segment_labels,
-            "historical_spend": self._generate_historical_spend(segment_labels, rng),
+            "historical_spend": self._generate_historical_spend(
+                segment_labels, ground_truth, rng
+            ),
             "region": rng.choice(KNOWN_REGIONS, size=n),
             "device_type": rng.choice(KNOWN_DEVICES, size=n),
         })
@@ -129,12 +136,12 @@ class PilotSimulator:
         return users_df, treatment_df, outcomes_df, ground_truth
 
     def _generate_historical_spend(
-        self, segment_labels: np.ndarray, rng: np.random.Generator
+        self, segment_labels: np.ndarray, ground_truth: GroundTruth, rng: np.random.Generator
     ) -> np.ndarray:
-        means = np.array(
-            [_SEGMENT_SPEND_MEAN.get(s, 100.0) for s in segment_labels]
+        means = pd.Series(segment_labels).map(ground_truth.spend_means).to_numpy()
+        noise = rng.normal(
+            loc=0.0, scale=ground_truth.spend_noise_std, size=len(segment_labels)
         )
-        noise = rng.normal(loc=0.0, scale=_SPEND_NOISE_STD, size=len(segment_labels))
         return np.clip(means + noise, 0.0, None)
 
     def _generate_signup_dates(self, n: int, rng: np.random.Generator) -> list[date]:
