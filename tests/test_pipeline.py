@@ -49,7 +49,7 @@ def test_pipeline_persists_test_set_predictions_for_each_model(seeded):
     test_ids = set(load_split_user_ids(engine, pilot_id, "test"))
     train_ids = set(load_split_user_ids(engine, pilot_id, "train"))
     assert len(test_ids) == 400 and test_ids.isdisjoint(train_ids)
-    assert set(runs) == {"baseline", "t_learner"}
+    assert set(runs) == {"baseline", "t_learner", "x_learner"}
     for run_id in runs.values():
         assert set(load_predictions(engine, run_id).index) == test_ids  # never train rows
 
@@ -83,7 +83,7 @@ def test_rerun_reuses_split_and_rejects_a_different_seed(seeded):
 
     with engine.connect() as conn:
         assert conn.execute(text("SELECT COUNT(*) FROM data_splits")).scalar() == 2_000
-        assert conn.execute(text("SELECT COUNT(*) FROM model_runs")).scalar() == 4
+        assert conn.execute(text("SELECT COUNT(*) FROM model_runs")).scalar() == 6
     assert set(load_split_user_ids(engine, pilot_id, "test")) == first_test
     with pytest.raises(ValueError, match="already has a split"):
         run_pipeline(engine, pilot_id, split_seed=2)
