@@ -6,7 +6,10 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 import pytest
+import yaml
 from sqlalchemy import text
+
+from config.schema import load_pilot_config
 
 
 @pytest.fixture
@@ -17,6 +20,16 @@ def engine(tmp_path, monkeypatch):
     eng = get_engine()
     init_schema(eng)
     return eng
+
+
+@pytest.fixture
+def small_config_path(tmp_path) -> str:
+    """The default config shrunk to 2,000 users, written to a temp YAML."""
+    cfg = load_pilot_config("config/default_config.yaml").model_dump()
+    cfg["n_users"] = 2_000
+    path = tmp_path / "small.yaml"
+    path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    return str(path)
 
 
 def insert_pilot(engine, pilot_id: str, user_ids: Iterable[str]) -> None:

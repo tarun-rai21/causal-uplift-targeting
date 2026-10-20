@@ -21,6 +21,17 @@ asserted.
 (validation numbers, Qini comparisons, screenshots, FAQ) once the pipeline is built and
 validated. Currently in early scaffolding — see the roadmap below.
 
+## Running it
+
+Requires Python 3.12+ (`pip install -r requirements-dev.txt`). From the repo root:
+
+```bash
+python -m db.seed          # simulate a pilot into ./causal_uplift.db (or $DATABASE_URL)
+python -m core.pipeline    # split it, train baseline + T-learner, persist test-set predictions
+pytest -m "not slow"       # fast suite (what CI runs)
+pytest -m slow -s          # statistical validation against simulator ground truth
+```
+
 ## Planned architecture
 
 - **Data layer**: configurable pilot simulator with known per-segment treatment effects
