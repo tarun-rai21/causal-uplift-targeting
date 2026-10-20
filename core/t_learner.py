@@ -61,21 +61,8 @@ def fit_t_learner(
     """
     factory = base_learner_factory or default_base_learner
 
-    merged = (
-        users_df.merge(treatment_df[["user_id", "treated"]], on="user_id")
-        .merge(outcomes_df[["user_id", "converted"]], on="user_id")
-    )
-    if len(merged) != len(users_df):
-        raise ValueError(
-            "users/treatment/outcomes did not merge 1:1 -- check that all "
-            "three DataFrames cover the same user set for this pilot"
-        )
-
     arms = {}
-    for arm_name, treated_flag in (("mu1", True), ("mu0", False)):
-        arm = merged[merged["treated"] == treated_flag]
-        if arm.empty:
-            raise ValueError(f"no rows in the {'treated' if treated_flag else 'control'} arm")
+    for arm_name, arm in split_arms(join_training_frame(users_df, treatment_df, outcomes_df)):
         labels = arm["converted"].astype(int)
         if labels.nunique() < 2:
             raise ValueError(
@@ -89,3 +76,31 @@ def fit_t_learner(
         arms[arm_name] = model
 
     return TLearner(mu1=arms["mu1"], mu0=arms["mu0"])
+
+
+def join_training_frame(
+    users_df: pd.DataFrame, treatment_df: pd.DataFrame, outcomes_df: pd.DataFrame
+) -> pd.DataFrame:
+    """users + treated + converted, one row per user; raises unless 1:1.
+    Shared with the X-learner, whose first stage is exactly this T-learner."""
+    merged = (
+        users_df.merge(treatment_df[["user_id", "treated"]], on="user_id")
+        .merge(outcomes_df[["user_id", "converted"]], on="user_id")
+    )
+    if len(merged) != len(users_df):
+        raise ValueError(
+            "users/treatment/outcomes did not merge 1:1 -- check that all "
+            "three DataFrames cover the same user set for this pilot"
+        )
+    return merged
+
+
+def split_arms(merged: pd.DataFrame) -> list[tuple[str, pd.DataFrame]]:
+    """[("mu1", treated rows), ("mu0", control rows)]; raises on an empty arm."""
+    arms = []
+    for arm_name, treated_flag in (("mu1", True), ("mu0", False)):
+        arm = merged[merged["treated"] == treated_flag]
+        if arm.empty:
+            raise ValueError(f"no rows in the {'treated' if treated_flag else 'control'} arm")
+        arms.append((arm_name, arm))
+    return arms

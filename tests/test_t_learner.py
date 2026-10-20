@@ -96,11 +96,16 @@ def test_fitted_learner_recovers_directional_effect():
     spend-dependent effect should predict higher uplift for high-spend users.
     Coarse assertion on group means only -- learner noise makes exact
     values untestable here; exactness lives in the closed-form tests."""
-    rng = np.random.default_rng(7)
     n = 4000
     users = _toy_users(n=n, seed=7)
+    # Treatment MUST come from a different stream than _toy_users' spend:
+    # this test once reused seed 7 for both, so treated <=> spend < 50, the
+    # treated & high_spend cell was empty, and the injected effect never
+    # occurred -- the assertion below passed on pure extrapolation.
+    rng = np.random.default_rng(1007)
     treated = rng.random(n) < 0.5
     high_spend = users["historical_spend"].values > 50
+    assert (treated & high_spend).sum() > 500  # the effect cell is populated
     p = np.full(n, 0.10)
     p = p + np.where(treated & high_spend, 0.25, 0.0)
     converted = rng.random(n) < p

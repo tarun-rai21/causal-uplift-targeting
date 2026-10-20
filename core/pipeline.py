@@ -5,7 +5,7 @@ tested pieces together end to end.
     pilot in DB (db/seed.py)
       -> load_pilot_frames        users / treatment / outcomes for one pilot
       -> ensure_split             persisted train/test split (computed once)
-      -> fit on TRAIN rows        baseline + T-learner
+      -> fit on TRAIN rows        baseline + T-learner + X-learner
       -> predict on TEST rows     persisted via core/model_store.py
 
 Predictions are written for TEST users only. Phase 5's Qini/AUUC evaluation
@@ -29,6 +29,7 @@ from core.baseline import fit_propensity_model, predict_propensity
 from core.data_split import compute_data_split, load_split_user_ids, persist_split
 from core.model_store import persist_model_run
 from core.t_learner import fit_t_learner
+from core.x_learner import fit_x_learner
 
 BASE_LEARNER = "gradient_boosting"  # core/learners.default_base_learner
 
@@ -131,7 +132,7 @@ def run_pipeline(
     split_seed: int = 42,
     random_state: int = 42,
 ) -> dict[str, str]:
-    """Train baseline + T-learner for a pilot; return {model_type: model_run_id}."""
+    """Train baseline, T- and X-learner for a pilot; return {model_type: model_run_id}."""
     users_df, treatment_df, outcomes_df = load_pilot_frames(engine, pilot_id)
     ensure_split(engine, pilot_id, treatment_df, outcomes_df, test_size, split_seed)
 
@@ -150,6 +151,9 @@ def run_pipeline(
     t_learner = fit_t_learner(
         train_users, train_treatment, train_outcomes, random_state=random_state
     )
+    x_learner = fit_x_learner(
+        train_users, train_treatment, train_outcomes, random_state=random_state
+    )
 
     return {
         "baseline": persist_model_run(
@@ -159,6 +163,10 @@ def run_pipeline(
         "t_learner": persist_model_run(
             engine, pilot_id, "t_learner", BASE_LEARNER,
             t_learner.predict_cate(test_users),
+        ),
+        "x_learner": persist_model_run(
+            engine, pilot_id, "x_learner", BASE_LEARNER,
+            x_learner.predict_cate(test_users),
         ),
     }
 
