@@ -57,6 +57,21 @@ def true_incremental_outcome(
     return float(lookup.loc[list(user_ids)].sum())
 
 
+def covariate_ceiling_target_ids(
+    users_df: pd.DataFrame, ground_truth: GroundTruth, k: int
+) -> list[str]:
+    """
+    The best k-user target list achievable from observable covariates: the
+    top k by true E[tau | X]. Its true_incremental_outcome is the ceiling a
+    CATE model should be judged against -- NOT the segment-oracle top k,
+    which ranks by hidden segment membership no model can observe.
+    """
+    if not 0 < k <= len(users_df):
+        raise ValueError(f"k must be in [1, {len(users_df)}], got {k}")
+    cate_x = ground_truth.true_cate_given_covariates(users_df)
+    return cate_x.sort_values(ascending=False, kind="stable").head(k).index.tolist()
+
+
 def permutation_test_against_random(
     target_user_ids: Iterable[str],
     candidate_pool_ids: Iterable[str],
@@ -98,9 +113,13 @@ def permutation_test_against_random(
     null_mean = float(null_distribution.mean())
     null_std = float(null_distribution.std())
 
+    # Both p-values use the (b + 1) / (m + 1) Monte Carlo correction
+    # (Phipson & Smyth, 2010): the observed list counts as one member of its
+    # own null, so a p-value can never be reported as exactly 0 from a
+    # finite number of resamples.
     observed_abs_dev = abs(observed - null_mean)
     null_abs_dev = np.abs(null_distribution - null_mean)
-    p_value_two_sided = float((null_abs_dev >= observed_abs_dev).mean())
+    p_value_two_sided = _mc_p_value(null_abs_dev >= observed_abs_dev)
 
     # One-sided: fraction of random draws that did AT LEAST AS WELL as the
     # target list. This is the actually-relevant claim for Phase 2's
@@ -112,7 +131,7 @@ def permutation_test_against_random(
     # that actually supports the thesis even more strongly -- that would
     # be a confusing, wrong test failure, so this one-sided value is what
     # the actual assertion should check, not p_value_two_sided.
-    p_beats_random = float((null_distribution >= observed).mean())
+    p_beats_random = _mc_p_value(null_distribution >= observed)
 
     return {
         "observed_incremental_outcome": observed,
@@ -122,3 +141,7 @@ def permutation_test_against_random(
         "p_beats_random": p_beats_random,
         "n_resamples": n_resamples,
     }
+
+
+def _mc_p_value(at_least_as_extreme: np.ndarray) -> float:
+    return float((at_least_as_extreme.sum() + 1) / (len(at_least_as_extreme) + 1))

@@ -7,6 +7,7 @@ Run directly: `python -m db.seed`
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import datetime, timezone
 
@@ -32,7 +33,21 @@ def seed_demo_pilot(config_path: str = "config/default_config.yaml") -> str:
         "name": "Demo pilot (simulated)",
         "start_date": now.date(),
         "budget_cap": None,
+        # Persisted with the pilot so validation reads back the truth that
+        # was ACTUALLY used, instead of re-deriving it from a YAML file that
+        # may have changed since (see data_sim/ground_truth.py).
+        "ground_truth_json": json.dumps(ground_truth.to_dict(), sort_keys=True),
     }])
+
+    # The simulator creates a brand-new synthetic population per call and
+    # numbers it u_00000000.. every time, but users.user_id is a global
+    # primary key (real users can join many pilots). Without namespacing, a
+    # second seed collides on the PK -- or, worse, would silently attach a
+    # new pilot's outcomes to a previous pilot's covariates.
+    users_df, treatment_df, outcomes_df = (
+        df.assign(user_id=pilot_id + ":" + df["user_id"])
+        for df in (users_df, treatment_df, outcomes_df)
+    )
 
     # generate() deliberately leaves assigned_at/observed_at unset (NaT) to
     # stay a pure, seed-reproducible function -- this is where the real

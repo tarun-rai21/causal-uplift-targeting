@@ -7,27 +7,11 @@ import pytest
 from sqlalchemy import text
 
 from core.model_store import load_predictions, persist_model_run
-
-
-@pytest.fixture
-def engine(tmp_path, monkeypatch):
-    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path}/test.db")
-    from db.connection import get_engine, init_schema  # matches Phase 0 API
-
-    eng = get_engine()
-    init_schema(eng)
-    return eng
+from tests.conftest import insert_pilot
 
 
 def _seed_pilot(engine, pilot_id="p1"):
-    with engine.begin() as conn:
-        conn.execute(
-            text(
-                "INSERT INTO pilots (pilot_id, name, start_date, budget_cap) "
-                "VALUES (:p, 'test', '2023-01-01', NULL)"
-            ),
-            {"p": pilot_id},
-        )
+    insert_pilot(engine, pilot_id, ["u1", "u2", "u3"])
 
 
 def test_round_trip(engine):
@@ -52,6 +36,19 @@ def test_rank_pct_is_descending_percentile(engine):
         ).fetchall()
     # highest uplift (u1) gets smallest rank_pct
     assert [r[0] for r in rows] == ["u1", "u3", "u2"]
+
+
+def test_rejects_predictions_for_unknown_users(engine):
+    """FK enforcement regression guard: predictions for users that were
+    never persisted must be rejected (as Postgres would), not stored as
+    orphans -- and the model_runs insert must roll back with them."""
+    _seed_pilot(engine)
+    with pytest.raises(Exception, match="FOREIGN KEY"):
+        persist_model_run(
+            engine, "p1", "t_learner", "gradient_boosting", pd.Series([0.1], index=["ghost"])
+        )
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT COUNT(*) FROM model_runs")).scalar() == 0
 
 
 def test_rejects_bad_model_type(engine):

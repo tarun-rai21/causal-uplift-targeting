@@ -2,9 +2,14 @@ import pandas as pd
 import pytest
 
 from config.schema import PilotConfig
-from core.data_split import compute_data_split, load_split_user_ids, persist_split
+from core.data_split import (
+    compute_data_split,
+    load_split_user_ids,
+    persist_split,
+    subset_to_split,
+)
 from data_sim.pilot_simulator import PilotSimulator
-from db.connection import init_schema
+from tests.conftest import insert_pilot
 
 BASE_KWARGS = dict(
     n_users=10_000,
@@ -89,14 +94,9 @@ def test_invalid_test_size_is_rejected():
         compute_data_split(treatment_df, outcomes_df, "p1", test_size=1.5, split_seed=1)
 
 
-def test_persist_and_load_round_trip(monkeypatch, tmp_path):
-    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path}/test.db")
-    from db.connection import get_engine as fresh_get_engine
-
-    engine = fresh_get_engine()
-    init_schema(engine)
-
+def test_persist_and_load_round_trip(engine):
     _, treatment_df, outcomes_df, _ = _generate_pilot(n_users=500, seed=2)
+    insert_pilot(engine, "p_test", treatment_df["user_id"])
     split_df = compute_data_split(treatment_df, outcomes_df, "p_test", test_size=0.25, split_seed=1)
     persist_split(engine, split_df)
 
@@ -107,11 +107,20 @@ def test_persist_and_load_round_trip(monkeypatch, tmp_path):
     assert set(train_ids).isdisjoint(set(test_ids))
 
 
-def test_load_split_rejects_invalid_split_name(monkeypatch, tmp_path):
-    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path}/test2.db")
-    from db.connection import get_engine as fresh_get_engine
-
-    engine = fresh_get_engine()
-    init_schema(engine)
+def test_load_split_rejects_invalid_split_name(engine):
     with pytest.raises(ValueError, match="split must be"):
         load_split_user_ids(engine, "any_pilot", "validation")
+
+
+def test_subset_to_split_partitions_every_frame_consistently():
+    users_df, treatment_df, outcomes_df, _ = _generate_pilot()
+    split_df = compute_data_split(treatment_df, outcomes_df, "p1", test_size=0.2, split_seed=1)
+    train_u, train_o = subset_to_split(split_df, "train", users_df, outcomes_df)
+    (test_u,) = subset_to_split(split_df, "test", users_df)
+
+    assert list(train_u["user_id"]) == list(train_o["user_id"])  # row-aligned
+    assert set(train_u["user_id"]).isdisjoint(test_u["user_id"])
+    assert len(train_u) + len(test_u) == len(users_df)
+    assert list(test_u.index) == list(range(len(test_u)))
+    with pytest.raises(ValueError, match="split must be"):
+        subset_to_split(split_df, "validation", users_df)

@@ -30,32 +30,49 @@ import numpy as np
 import pandas as pd
 
 from config.schema import PilotConfig
+from core.features import KNOWN_DEVICES, KNOWN_REGIONS
 from data_sim.ground_truth import GroundTruth
-
-_REGIONS = ["north", "south", "east", "west"]
-_DEVICES = ["mobile", "desktop", "tablet"]
 
 # Per-segment mean historical_spend, used to give covariates a realistic,
 # overlapping (not perfectly separable) correlation with segment.
-# Unrecognized segment names fall back to a neutral mean.
+# Unrecognized segment names fall back to _DEFAULT_SPEND_MEAN.
 _SEGMENT_SPEND_MEAN = {
     "persuadable": 120.0,
     "sure_thing": 200.0,
     "lost_cause": 60.0,
     "sleeping_dog": 90.0,
 }
+_DEFAULT_SPEND_MEAN = 100.0
 _SPEND_NOISE_STD = 80.0  # deliberately large relative to the mean gaps above
 
 
 class PilotSimulator:
     def __init__(self, config: PilotConfig):
         self.config = config
-        self._rng = np.random.default_rng(config.seed)
 
     def generate(self) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, GroundTruth]:
         cfg = self.config
-        rng = self._rng
+        # A fresh RNG per call (not one stored on self) is what makes
+        # generate() a pure function of config: calling it twice on the
+        # same instance returns identical data, not two different pilots.
+        rng = np.random.default_rng(cfg.seed)
         n = cfg.n_users
+
+        # Built first so the per-segment probabilities and spend means below
+        # are read from the same object that is returned as the record of
+        # truth, rather than recomputed separately and risking drift.
+        ground_truth = GroundTruth(
+            baseline_rate=cfg.baseline_rate,
+            propensity=cfg.propensity,
+            segment_mix=cfg.segment_mix,
+            segment_effects=cfg.segment_effects,
+            segment_baseline_offsets=cfg.segment_baseline_offsets,
+            seed=cfg.seed,
+            spend_means={
+                s: _SEGMENT_SPEND_MEAN.get(s, _DEFAULT_SPEND_MEAN) for s in cfg.segment_mix
+            },
+            spend_noise_std=_SPEND_NOISE_STD,
+        )
 
         segments = np.array(list(cfg.segment_mix.keys()))
         mix_probs = np.array([cfg.segment_mix[s] for s in segments])
@@ -67,9 +84,11 @@ class PilotSimulator:
             "user_id": user_ids,
             "signup_date": self._generate_signup_dates(n, rng),
             "segment": segment_labels,
-            "historical_spend": self._generate_historical_spend(segment_labels, rng),
-            "region": rng.choice(_REGIONS, size=n),
-            "device_type": rng.choice(_DEVICES, size=n),
+            "historical_spend": self._generate_historical_spend(
+                segment_labels, ground_truth, rng
+            ),
+            "region": rng.choice(KNOWN_REGIONS, size=n),
+            "device_type": rng.choice(KNOWN_DEVICES, size=n),
         })
 
         treated = rng.random(n) < cfg.propensity
@@ -88,12 +107,14 @@ class PilotSimulator:
             "assigned_at": pd.NaT,
         })
 
-        control_p = np.array([
-            cfg.baseline_rate + cfg.segment_baseline_offsets.get(s, 0.0)
-            for s in segment_labels
-        ])
-        effect = np.array([cfg.segment_effects[s] for s in segment_labels])
-        conversion_prob = np.where(treated, control_p + effect, control_p)
+        labels = pd.Series(segment_labels)
+        control_p = labels.map(
+            {s: ground_truth.true_control_probability(s) for s in segments}
+        ).to_numpy()
+        treated_p = labels.map(
+            {s: ground_truth.true_treated_probability(s) for s in segments}
+        ).to_numpy()
+        conversion_prob = np.where(treated, treated_p, control_p)
         # PilotConfig validation already guarantees this stays in [0, 1] for
         # every segment; clip anyway as a defense-in-depth safety net against
         # floating-point edge cases, not as a substitute for that validation.
@@ -112,24 +133,15 @@ class PilotSimulator:
             "observed_at": pd.NaT,
         })
 
-        ground_truth = GroundTruth(
-            baseline_rate=cfg.baseline_rate,
-            propensity=cfg.propensity,
-            segment_mix=dict(cfg.segment_mix),
-            segment_effects=dict(cfg.segment_effects),
-            segment_baseline_offsets=dict(cfg.segment_baseline_offsets),
-            seed=cfg.seed,
-        )
-
         return users_df, treatment_df, outcomes_df, ground_truth
 
     def _generate_historical_spend(
-        self, segment_labels: np.ndarray, rng: np.random.Generator
+        self, segment_labels: np.ndarray, ground_truth: GroundTruth, rng: np.random.Generator
     ) -> np.ndarray:
-        means = np.array(
-            [_SEGMENT_SPEND_MEAN.get(s, 100.0) for s in segment_labels]
+        means = pd.Series(segment_labels).map(ground_truth.spend_means).to_numpy()
+        noise = rng.normal(
+            loc=0.0, scale=ground_truth.spend_noise_std, size=len(segment_labels)
         )
-        noise = rng.normal(loc=0.0, scale=_SPEND_NOISE_STD, size=len(segment_labels))
         return np.clip(means + noise, 0.0, None)
 
     def _generate_signup_dates(self, n: int, rng: np.random.Generator) -> list[date]:

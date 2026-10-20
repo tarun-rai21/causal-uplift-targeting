@@ -25,6 +25,7 @@ import warnings
 
 import pandas as pd
 from sklearn.model_selection import train_test_split
+from sqlalchemy import text
 
 
 def compute_data_split(
@@ -100,8 +101,6 @@ def load_split_user_ids(engine, pilot_id: str, split: str) -> list[str]:
     if split not in ("train", "test"):
         raise ValueError(f"split must be 'train' or 'test', got {split!r}")
 
-    from sqlalchemy import text
-
     with engine.connect() as conn:
         result = conn.execute(
             text(
@@ -111,3 +110,19 @@ def load_split_user_ids(engine, pilot_id: str, split: str) -> list[str]:
             {"pilot_id": pilot_id, "split": split},
         )
         return [row[0] for row in result]
+
+
+def subset_to_split(
+    split_df: pd.DataFrame, split: str, *frames: pd.DataFrame
+) -> tuple[pd.DataFrame, ...]:
+    """
+    Filter each of `frames` (any user_id-keyed DataFrame) to the users that
+    split_df assigns to `split`, with a fresh RangeIndex. The in-memory
+    counterpart of load_split_user_ids, for callers that hold a split_df
+    directly (e.g. the validation suite) -- one place that applies the
+    train/test boundary instead of a hand-written isin() per call site.
+    """
+    if split not in ("train", "test"):
+        raise ValueError(f"split must be 'train' or 'test', got {split!r}")
+    ids = set(split_df.loc[split_df["split"] == split, "user_id"])
+    return tuple(f[f["user_id"].isin(ids)].reset_index(drop=True) for f in frames)
