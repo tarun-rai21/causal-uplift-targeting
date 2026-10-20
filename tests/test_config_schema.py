@@ -127,3 +127,12 @@ def test_error_message_names_the_offending_segment():
     bad["segment_effects"] = {"persuadable": 0.15, "sure_thing": 0.01, "lost_cause": 0.0}
     with pytest.raises(ValidationError, match="'persuadable'"):
         PilotConfig(**bad)
+
+
+def test_unknown_top_level_key_is_rejected():
+    """A YAML typo (here: singular 'segment_baseline_offset') must fail
+    loudly, not silently zero every baseline offset."""
+    bad = dict(VALID_KWARGS)
+    bad["segment_baseline_offset"] = {"sure_thing": 0.30}
+    with pytest.raises(ValidationError, match="segment_baseline_offset"):
+        PilotConfig(**bad)

@@ -17,19 +17,11 @@ into tau_hat with nothing forcing the two models to be consistent.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable
 
 import pandas as pd
-from sklearn.ensemble import GradientBoostingClassifier
 
 from core.features import build_feature_matrix
-
-
-def _default_base_learner_factory(random_state: int) -> GradientBoostingClassifier:
-    # Identical class + params as core/baseline.py's model, deliberately:
-    # any Qini difference vs. baseline must come from the estimand, not
-    # from model capacity.
-    return GradientBoostingClassifier(random_state=random_state)
+from core.learners import BaseLearnerFactory, default_base_learner
 
 
 @dataclass
@@ -58,7 +50,7 @@ def fit_t_learner(
     treatment_df: pd.DataFrame,
     outcomes_df: pd.DataFrame,
     random_state: int = 42,
-    base_learner_factory: Callable[[int], object] | None = None,
+    base_learner_factory: BaseLearnerFactory | None = None,
 ) -> TLearner:
     """
     Fit mu1 on treated-only and mu0 on control-only rows.
@@ -67,7 +59,7 @@ def fit_t_learner(
     (same contract as core/baseline.py: this function cannot know which
     split it was handed, so it does not filter for you).
     """
-    factory = base_learner_factory or _default_base_learner_factory
+    factory = base_learner_factory or default_base_learner
 
     merged = (
         users_df.merge(treatment_df[["user_id", "treated"]], on="user_id")

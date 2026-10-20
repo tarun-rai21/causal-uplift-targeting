@@ -42,19 +42,29 @@ Validation rules and why each one exists:
    within the CLOSED interval [0, 1]. Checked per-segment so the error
    names exactly which segment and which arm (control vs. treated) is at
    fault.
+
+9. Unknown top-level keys are rejected (extra="forbid"). Pydantic's default
+   is to silently ignore them, so a YAML typo such as
+   `segment_baseline_offset:` (singular) would drop every offset to 0.0 and
+   quietly turn the Phase 2 naive-model demo into the strawman rule 7
+   exists to prevent.
 """
 
 from __future__ import annotations
 
 import math
+import warnings
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+import yaml
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 _REQUIRED_SEGMENTS = {"persuadable", "sure_thing", "lost_cause"}
 _MIN_RECOMMENDED_SEGMENT_COUNT = 200  # heuristic floor for a segment to be estimable
 
 
 class PilotConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     n_users: int = Field(gt=0)
     baseline_rate: float = Field(gt=0.0, lt=1.0)
     propensity: float = Field(gt=0.0, lt=1.0)
@@ -119,8 +129,6 @@ class PilotConfig(BaseModel):
             if frac * self.n_users < _MIN_RECOMMENDED_SEGMENT_COUNT
         ]
         if thin_segments:
-            import warnings
-
             warnings.warn(
                 f"Segment(s) {thin_segments} will have fewer than "
                 f"{_MIN_RECOMMENDED_SEGMENT_COUNT} expected users at "
@@ -164,8 +172,6 @@ class PilotConfig(BaseModel):
 
 def load_pilot_config(path: str) -> PilotConfig:
     """Load and validate a YAML pilot config file."""
-    import yaml
-
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         raw = yaml.safe_load(f)
     return PilotConfig(**raw)

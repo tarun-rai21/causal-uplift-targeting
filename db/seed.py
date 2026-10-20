@@ -34,6 +34,16 @@ def seed_demo_pilot(config_path: str = "config/default_config.yaml") -> str:
         "budget_cap": None,
     }])
 
+    # The simulator creates a brand-new synthetic population per call and
+    # numbers it u_00000000.. every time, but users.user_id is a global
+    # primary key (real users can join many pilots). Without namespacing, a
+    # second seed collides on the PK -- or, worse, would silently attach a
+    # new pilot's outcomes to a previous pilot's covariates.
+    users_df, treatment_df, outcomes_df = (
+        df.assign(user_id=pilot_id + ":" + df["user_id"])
+        for df in (users_df, treatment_df, outcomes_df)
+    )
+
     # generate() deliberately leaves assigned_at/observed_at unset (NaT) to
     # stay a pure, seed-reproducible function -- this is where the real
     # "when was this actually persisted" timestamp belongs.

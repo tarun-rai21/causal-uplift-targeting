@@ -4,19 +4,19 @@
 name = "causal-uplift-targeting"
 version = "0.1.0"
 description = "Uplift modeling for budget-constrained incentive targeting"
-requires-python = ">=3.11"
+requires-python = ">=3.12"  # numpy 2.5 / scipy 1.18 pins require 3.12
 readme = "README.md"
 
 [tool.pytest.ini_options]
 markers = [
-    "slow: statistical / simulation-based validation tests, excluded from default CI (run manually via scripts/run_validation_suite.sh)",
+    "slow: statistical / simulation-based validation tests, excluded from default CI (run manually via: pytest -m slow)",
 ]
 testpaths = ["tests", "validation"]
 addopts = "-ra"
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]

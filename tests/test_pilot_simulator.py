@@ -113,3 +113,19 @@ def test_invalid_config_is_rejected_before_a_simulator_can_be_built():
     }
     with pytest.raises(ValidationError, match=r"out of \[0, 1\] bounds"):
         PilotConfig(**bad_kwargs)
+
+
+def test_generate_is_pure_across_repeated_calls_on_one_instance():
+    """generate() must depend only on config: calling it twice on the SAME
+    simulator must not advance shared RNG state and yield a different pilot."""
+    sim = _make_simulator(seed=8)
+    first, second = sim.generate(), sim.generate()
+    for a, b in zip(first[:3], second[:3]):
+        pd.testing.assert_frame_equal(a, b)
+
+
+def test_ground_truth_mappings_are_read_only():
+    _, _, _, gt = _make_simulator().generate()
+    with pytest.raises(TypeError):
+        gt.segment_effects["persuadable"] = 99.0
+    assert gt.true_uplift("persuadable") == 0.15

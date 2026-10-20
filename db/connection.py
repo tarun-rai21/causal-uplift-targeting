@@ -4,8 +4,9 @@
 Database connection factory.
 
 Design decision: we use SQLAlchemy Core (not the ORM) throughout this project.
-Raw SQL is written explicitly in core/data_access.py rather than hidden behind
-ORM query-building — this is a deliberate SQL-fluency signal (per the spec,
+Raw SQL is written explicitly in the modules that own each query (e.g.
+core/data_split.py, core/model_store.py) rather than hidden behind ORM
+query-building — this is a deliberate SQL-fluency signal (per the spec,
 Section 3) and keeps the analytical queries (Qini-curve input construction,
 model comparison) visible and reviewable as SQL, not abstracted away.
 
@@ -14,14 +15,14 @@ DATABASE_URL environment variable controls the backend:
     - set to a Postgres DSN -> one-line swap to Postgres for production parity
 
 This module intentionally exposes only two things: get_engine() and
-init_schema(). Everything else (queries) lives in core/data_access.py, so this
-file's job stays narrow: "how do we connect," not "what do we ask."
+init_schema(). Everything else (queries) lives with the code that issues it, so
+this file's job stays narrow: "how do we connect," not "what do we ask."
 """
 
 import os
 from pathlib import Path
 
-from sqlalchemy import Engine, create_engine, text
+from sqlalchemy import Engine, create_engine, event, text
 
 _DEFAULT_SQLITE_PATH = Path(__file__).resolve().parent.parent / "causal_uplift.db"
 _SCHEMA_PATH = Path(__file__).resolve().parent / "schema.sql"
@@ -41,10 +42,25 @@ def get_engine() -> Engine:
     single process; this is safe here because we are not sharing a single
     connection object across threads concurrently — each call opens its own
     connection via the engine's pool.
+
+    SQLite also ships with foreign-key enforcement OFF per connection, so
+    every REFERENCES clause in schema.sql would otherwise be decorative --
+    orphan rows that Postgres rejects would be silently accepted here,
+    breaking the "one-line swap to Postgres" claim in the module docstring.
     """
     url = get_database_url()
-    connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
-    return create_engine(url, connect_args=connect_args)
+    is_sqlite = url.startswith("sqlite")
+    connect_args = {"check_same_thread": False} if is_sqlite else {}
+    engine = create_engine(url, connect_args=connect_args)
+    if is_sqlite:
+        event.listen(engine, "connect", _enable_sqlite_foreign_keys)
+    return engine
+
+
+def _enable_sqlite_foreign_keys(dbapi_connection, _connection_record) -> None:
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.close()
 
 
 def _strip_line_comments(sql: str) -> str:
@@ -80,7 +96,7 @@ def init_schema(engine: Engine | None = None) -> None:
     safe and does not raise on existing tables.
     """
     engine = engine or get_engine()
-    schema_sql = _strip_line_comments(_SCHEMA_PATH.read_text())
+    schema_sql = _strip_line_comments(_SCHEMA_PATH.read_text(encoding="utf-8"))
     with engine.begin() as conn:
         for statement in schema_sql.split(";"):
             statement = statement.strip()

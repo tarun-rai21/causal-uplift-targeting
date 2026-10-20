@@ -13,16 +13,17 @@ targeting on TRUE incremental outcome.
 from __future__ import annotations
 
 import pandas as pd
-from sklearn.ensemble import GradientBoostingClassifier
 
 from core.features import build_feature_matrix
+from core.learners import BaseLearnerFactory, default_base_learner
 
 
 def fit_propensity_model(
     users_df: pd.DataFrame,
     outcomes_df: pd.DataFrame,
     random_state: int = 42,
-) -> GradientBoostingClassifier:
+    base_learner_factory: BaseLearnerFactory | None = None,
+):
     """
     Fit P(convert | X), ignoring treatment entirely.
 
@@ -37,12 +38,12 @@ def fit_propensity_model(
         .astype(int)
         .values
     )
-    model = GradientBoostingClassifier(random_state=random_state)
+    model = (base_learner_factory or default_base_learner)(random_state)
     model.fit(features, labels)
     return model
 
 
-def predict_propensity(model: GradientBoostingClassifier, users_df: pd.DataFrame) -> pd.Series:
+def predict_propensity(model, users_df: pd.DataFrame) -> pd.Series:
     """Predicted P(convert|X) for each user, returned as a Series indexed by user_id."""
     features = build_feature_matrix(users_df)
     scores = model.predict_proba(features)[:, 1]
