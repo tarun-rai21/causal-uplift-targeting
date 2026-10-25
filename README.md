@@ -27,10 +27,33 @@ Requires Python 3.12+ (`pip install -r requirements-dev.txt`). From the repo roo
 
 ```bash
 python -m db.seed          # simulate a pilot into ./causal_uplift.db (or $DATABASE_URL)
-python -m core.pipeline    # split it, train baseline + T-learner, persist test-set predictions
+python -m core.pipeline    # split it, train baseline + T/X-learner, persist test-set predictions
+python -m core.evaluation  # Qini / AUUC with paired bootstrap CIs; persists curves + scores
 pytest -m "not slow"       # fast suite (what CI runs)
 pytest -m slow -s          # statistical validation against simulator ground truth
 ```
+
+`pip install -r requirements-validation.txt` additionally enables the exact
+cross-check against `causalml` (skipped otherwise).
+
+## Findings so far
+
+On the default simulator (top-decile = targeting the 10% with the highest score):
+
+- **Naive targeting fails where budgets bite.** Its top decile is 72% sure-things and
+  lands at or below random on true incremental conversions (5/5 seeds).
+- **CATE learners win at the top.** The T-learner's top decile beats the baseline in 5/5
+  seeds and captures ~60% of the lift achievable from observable covariates.
+- **But not over the whole ranking.** On true whole-curve area the naive baseline beats
+  both learners (5/5 seeds): ranking by conversion propensity tracks spend, which is a
+  decent proxy for uplift everywhere except the very top. Which model is "better"
+  depends on the budget -- exactly what the Phase 7 policy layer has to decide.
+- **The X-learner estimates better, but doesn't always target better.** It had lower
+  error than the T-learner in 10/10 runs, but won top-decile targeting only under an
+  imbalanced pilot (4/5 at e=0.2, lost 4/5 at e=0.5).
+- **Qini needs much more data than the oracle.** On a 10k-user test set its intervals
+  (about +/-20) are wider than the real gaps between trained models; it recovers the
+  true ordering of targeting rules reliably only at a few hundred thousand users.
 
 ## Planned architecture
 

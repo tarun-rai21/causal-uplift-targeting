@@ -12,6 +12,7 @@ EXPECTED_TABLES = {
     "data_splits",
     "model_runs",
     "uplift_predictions",
+    "model_evaluations",
     "qini_curve_points",
     "policy_simulations",
 }

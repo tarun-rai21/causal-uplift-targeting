@@ -67,6 +67,24 @@ CREATE TABLE IF NOT EXISTS uplift_predictions (
     PRIMARY KEY (model_run_id, user_id)
 );
 
+-- Phase 5 addition: one row per evaluated model_run. Scalar scores and their
+-- paired-bootstrap intervals; the curve itself lives in qini_curve_points.
+-- Intervals reflect evaluation-sample noise only (fitted model held fixed).
+CREATE TABLE IF NOT EXISTS model_evaluations (
+    model_run_id TEXT PRIMARY KEY REFERENCES model_runs(model_run_id),
+    n_users INTEGER NOT NULL,          -- test-set size the scores were computed on
+    qini_coefficient REAL NOT NULL,    -- mean of Q(t) minus the random line, t = 0..N
+    qini_ci_lower REAL NOT NULL,
+    qini_ci_upper REAL NOT NULL,
+    auuc REAL NOT NULL,                -- mean of the cumulative-gain curve G(t)
+    auuc_ci_lower REAL NOT NULL,
+    auuc_ci_upper REAL NOT NULL,
+    n_bootstrap INTEGER NOT NULL,
+    ci_level REAL NOT NULL,
+    bootstrap_seed INTEGER NOT NULL,
+    evaluated_at TIMESTAMP NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS qini_curve_points (
     model_run_id TEXT NOT NULL REFERENCES model_runs(model_run_id),
     pct_targeted REAL NOT NULL,

@@ -1,0 +1,10 @@
+# requirements-validation.txt
+#
+# Only for the causalml cross-check in tests/test_evaluation.py (skipped
+# when causalml is absent, so CI stays light). Not needed by any project
+# code -- core/evaluation.py is self-contained. Resolves against the main
+# pins without moving any of them (verified with pip --dry-run -c
+# requirements.txt), but adds ~30 packages (xgboost, lightgbm, shap, ...).
+
+-r requirements-dev.txt
+causalml==0.17.0
