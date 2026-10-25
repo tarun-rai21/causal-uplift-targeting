@@ -29,12 +29,13 @@ uvicorn==0.51.0
 # Testing
 pytest==9.1.1
 
-# NOTE: causalml is intentionally NOT pinned here yet.
-# Required starting Phase 5 (evaluation cross-check). Confirmed compatible:
+# NOTE: causalml is intentionally NOT pinned here -- it lives in
+# requirements-validation.txt, used only by the Phase 5 cross-check test
+# (core/evaluation.py does not import it). Confirmed compatible:
 # causalml 0.17.0 ships a genuine cp312 wheel (verified against actual
 # release filenames, not just declared metadata) and requires numpy>=1.25.2,
 # scipy>=1.16.0, scikit-learn>=1.6.0 -- all satisfied by the pins above.
 # It DOES pull a heavy dependency tree (xgboost, lightgbm, shap, statsmodels,
 # matplotlib, seaborn, forestci, pathos, graphviz) -- fine on 3.12, revisit
-# the lightweight-alternative (scikit-uplift) decision in Phase 5 only if
-# the install proves too heavy in practice, not due to version conflicts.
+# the lightweight-alternative (scikit-uplift) decision only if the install
+# proves too heavy in practice, not due to version conflicts.
