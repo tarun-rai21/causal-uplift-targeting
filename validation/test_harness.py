@@ -18,6 +18,11 @@ ROBUST_CLAIMS = (
     "t_beats_naive_top10",
     "x_beats_naive_top10",
     "x_lower_rmse_than_t",
+    "naive_policy_loses_money_10",
+    "roi_policies_profitable_10",
+    "roi_policies_beat_naive_all_budgets",
+    "planned_lists_underspend",
+    "model_valuation_overstates",
 )
 
 
@@ -26,6 +31,7 @@ ROBUST_CLAIMS = (
 def test_robust_claims_hold_and_report_renders(run_name, request):
     result = evaluate_run(request.getfixturevalue(run_name), n_bootstrap=50)
     assert set(result.claims) == set(CLAIMS)
+    assert result.policy is not None  # harness runs carry economics + revenue truth
     for claim in ROBUST_CLAIMS:
         assert result.claims[claim], claim
 

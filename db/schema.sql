@@ -94,13 +94,38 @@ CREATE TABLE IF NOT EXISTS qini_curve_points (
     PRIMARY KEY (model_run_id, pct_targeted)
 );
 
+-- Phase 7: shared per-user economics the policy layer prices targeting with
+-- (core/economics.py), for the pilot's test users. Replaced on each pipeline run.
+CREATE TABLE IF NOT EXISTS user_economics (
+    pilot_id TEXT NOT NULL REFERENCES pilots(pilot_id),
+    user_id TEXT NOT NULL REFERENCES users(user_id),
+    p_convert_if_treated REAL NOT NULL,     -- P(convert | treated, x)
+    revenue_per_conversion REAL NOT NULL,   -- E[revenue | converted, x]
+    PRIMARY KEY (pilot_id, user_id)
+);
+
+-- Phase 7: one row per budget point of a policy curve (core/policy.py).
+-- Models choose WHO is targeted; the randomized evaluation-set outcomes value
+-- it (ab_* columns, unbiased). model_* are the model's own valuations over the
+-- users it picked -- optimistic by construction, kept for contrast; NULL for
+-- the naive baseline, which has no uplift estimate.
 CREATE TABLE IF NOT EXISTS policy_simulations (
     policy_sim_id TEXT PRIMARY KEY,
+    policy_curve_id TEXT NOT NULL,     -- groups the points of one curve
     model_run_id TEXT NOT NULL REFERENCES model_runs(model_run_id),
-    budget_pct REAL NOT NULL,
+    cashback_rate REAL NOT NULL,       -- share of revenue paid on each treated conversion
+    min_roi REAL,                      -- ROI floor applied, NULL if none
+    budget_pct REAL NOT NULL,          -- budget / estimated cost of treating everyone
+    budget REAL NOT NULL,
     n_targeted INTEGER NOT NULL,
-    expected_incremental_revenue REAL NOT NULL,
-    expected_incremental_revenue_ci_lower REAL,
-    expected_incremental_revenue_ci_upper REAL,
-    marginal_roi REAL NOT NULL         -- d(incremental revenue)/d(budget) at this point
+    expected_spend REAL NOT NULL,      -- planning estimate the selection stopped on
+    model_incremental_revenue REAL,
+    model_net_revenue REAL,
+    model_marginal_roi REAL,           -- d(model revenue)/d(spend) since the previous point
+    ab_incremental_revenue REAL,       -- NULL when the targeted set lacks a treated or control user
+    ab_spend REAL,
+    ab_net_revenue REAL,
+    ab_net_ci_lower REAL,
+    ab_net_ci_upper REAL,
+    created_at TIMESTAMP NOT NULL
 );

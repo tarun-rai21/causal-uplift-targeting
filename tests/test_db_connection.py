@@ -15,6 +15,7 @@ EXPECTED_TABLES = {
     "model_evaluations",
     "qini_curve_points",
     "policy_simulations",
+    "user_economics",
 }
 
 

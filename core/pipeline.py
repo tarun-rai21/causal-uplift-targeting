@@ -7,6 +7,8 @@ tested pieces together end to end.
       -> ensure_split             persisted train/test split (computed once)
       -> fit on TRAIN rows        baseline + T-learner + X-learner
       -> predict on TEST rows     persisted via core/model_store.py
+      -> economics on TEST rows   P(convert | treated), revenue per conversion,
+                                  persisted for the policy layer (core/policy.py)
 
 Predictions are written for TEST users only. Phase 5's Qini/AUUC evaluation
 reads a model_run's predictions and compares treated vs. control outcomes
@@ -27,7 +29,9 @@ from sqlalchemy import text
 
 from core.baseline import fit_propensity_model, predict_propensity
 from core.data_split import compute_data_split, load_split_user_ids, persist_split
+from core.economics import fit_economics
 from core.model_store import persist_model_run
+from core.policy import persist_economics
 from core.t_learner import fit_t_learner
 from core.x_learner import fit_x_learner
 
@@ -154,6 +158,10 @@ def run_pipeline(
     x_learner = fit_x_learner(
         train_users, train_treatment, train_outcomes, random_state=random_state
     )
+    economics = fit_economics(
+        train_users, train_treatment, train_outcomes, random_state=random_state
+    )
+    persist_economics(engine, pilot_id, economics.predict(test_users))
 
     return {
         "baseline": persist_model_run(

@@ -143,6 +143,27 @@ class GroundTruth:
             name="true_cate_given_x",
         )
 
+    def economics_given_covariates(self, users_df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Covariate-level truth for the policy layer, user_id-indexed:
+            incremental_revenue = E[tau * m | X] = sum_s P(s|X) tau_s m_s
+            treated_revenue     = E[p1 * m | X]  = sum_s P(s|X) p1_s m_s
+        A cashback policy at rate r costs r * treated_revenue per treated
+        user, so ranking by incremental_revenue / treated_revenue is the
+        best ROI ordering any model could achieve from covariates.
+        """
+        posterior = self.segment_posterior(users_df["historical_spend"].to_numpy())
+        segments = list(posterior.columns)
+        incr = np.array([self.true_revenue_uplift(s) for s in segments])
+        treated = np.array([self.expected_treated_revenue(s) for s in segments])
+        return pd.DataFrame(
+            {
+                "incremental_revenue": posterior.to_numpy() @ incr,
+                "treated_revenue": posterior.to_numpy() @ treated,
+            },
+            index=users_df["user_id"].values,
+        )
+
     def to_dict(self) -> dict:
         """JSON-serializable form (dataclasses.asdict cannot deep-copy the
         MappingProxyType fields)."""
