@@ -136,3 +136,13 @@ def test_unknown_top_level_key_is_rejected():
     bad["segment_baseline_offset"] = {"sure_thing": 0.30}
     with pytest.raises(ValidationError, match="segment_baseline_offset"):
         PilotConfig(**bad)
+
+
+def test_revenue_means_must_be_known_segments_and_positive():
+    bad = dict(VALID_KWARGS)
+    bad["segment_revenue_means"] = {"whale": 500.0}
+    with pytest.raises(ValidationError, match="not present in segment_mix"):
+        PilotConfig(**bad)
+    bad["segment_revenue_means"] = {"persuadable": 0.0}
+    with pytest.raises(ValidationError, match="must be > 0"):
+        PilotConfig(**bad)

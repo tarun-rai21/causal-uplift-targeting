@@ -26,6 +26,17 @@ segment_baseline_offsets:
   lost_cause: -0.08    # control prob = 0.02 (low, unreachable)
   sleeping_dog: 0.05   # control prob = 0.15
 
+# Per-segment expected revenue per conversion (log-normal, sigma 0.6).
+# Optional; unlisted segments use the simulator default (~39.65). Ordered
+# like the segments' mean historical_spend: bigger spenders, bigger baskets.
+# What it changes is the ECONOMICS, not the uplift ranking -- see
+# config/schema.py rule 10.
+segment_revenue_means:
+  persuadable: 40.0
+  sure_thing: 60.0
+  lost_cause: 25.0
+  sleeping_dog: 35.0
+
 # Population mix. Must sum to 1.0.
 segment_mix:
   persuadable: 0.25

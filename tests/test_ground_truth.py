@@ -65,3 +65,21 @@ def test_posterior_requires_covariate_process_parameters():
     )
     with pytest.raises(ValueError, match="spend_means"):
         gt.segment_posterior(np.array([1.0]))
+
+
+def test_revenue_economics_from_segment_means(big_pilot):
+    _, gt = big_pilot
+    assert gt.true_revenue_uplift("persuadable") == pytest.approx(0.15 * 40.0)
+    assert gt.true_revenue_uplift("sleeping_dog") == pytest.approx(-0.05 * 35.0)
+    # sure_thing: tiny incremental revenue, large revenue an incentive pays out on
+    assert gt.expected_treated_revenue("sure_thing") == pytest.approx(0.41 * 60.0)
+    assert gt.expected_treated_revenue("sure_thing") > 40 * gt.true_revenue_uplift("sure_thing")
+
+
+def test_revenue_methods_refuse_a_truth_without_revenue_means():
+    gt = GroundTruth(
+        baseline_rate=0.1, propensity=0.5,
+        segment_mix={"a": 1.0}, segment_effects={"a": 0.1},
+    )
+    with pytest.raises(ValueError, match="predates segment-dependent revenue"):
+        gt.true_revenue_uplift("a")

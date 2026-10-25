@@ -48,6 +48,14 @@ Validation rules and why each one exists:
    `segment_baseline_offset:` (singular) would drop every offset to 0.0 and
    quietly turn the Phase 2 naive-model demo into the strawman rule 7
    exists to prevent.
+
+10. segment_revenue_means (optional; unlisted segments use the simulator's
+    default) is each segment's expected revenue per conversion. Values
+    must be > 0 and keys must be real segments. This is what gives the
+    Phase 7 policy layer real economics: incremental revenue per treated
+    user is effect * mean, while a conversion-triggered incentive is paid
+    on EVERY treated conversion -- so a high-converting, low-effect segment
+    (sure_thing) can cost more than it earns.
 """
 
 from __future__ import annotations
@@ -73,6 +81,7 @@ class PilotConfig(BaseModel):
     segment_effects: dict[str, float]
     segment_mix: dict[str, float]
     segment_baseline_offsets: dict[str, float] = Field(default_factory=dict)
+    segment_revenue_means: dict[str, float] = Field(default_factory=dict)
 
     @field_validator("segment_mix")
     @classmethod
@@ -120,6 +129,18 @@ class PilotConfig(BaseModel):
                 "optional per-segment (missing entries default to an "
                 "offset of 0.0), but any key present must be a real segment."
             )
+        return self
+
+    @model_validator(mode="after")
+    def _revenue_means_are_valid(self) -> "PilotConfig":
+        unknown = set(self.segment_revenue_means) - set(self.segment_mix)
+        if unknown:
+            raise ValueError(
+                f"segment_revenue_means has segment(s) not present in segment_mix: {unknown}"
+            )
+        bad = {s: v for s, v in self.segment_revenue_means.items() if not v > 0}
+        if bad:
+            raise ValueError(f"segment_revenue_means must be > 0, got {bad}")
         return self
 
     @model_validator(mode="after")

@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 import pytest
 from pydantic import ValidationError
@@ -129,3 +130,23 @@ def test_ground_truth_mappings_are_read_only():
     with pytest.raises(TypeError):
         gt.segment_effects["persuadable"] = 99.0
     assert gt.true_uplift("persuadable") == 0.15
+
+
+def test_revenue_per_conversion_matches_segment_means_without_touching_conversions():
+    means = {"persuadable": 40.0, "sure_thing": 60.0, "lost_cause": 25.0}
+    with_rev = _make_simulator(n_users=200_000, seed=9, segment_revenue_means=means)
+    without = _make_simulator(n_users=200_000, seed=9)
+    users, _, outcomes, gt = with_rev.generate()
+    _, _, plain_outcomes, plain_gt = without.generate()
+
+    # Revenue is drawn after conversion, consuming the same draws, so the
+    # revenue model must not change who converts.
+    assert outcomes["converted"].equals(plain_outcomes["converted"])
+    observed = users.assign(rev=outcomes["revenue"])[outcomes["converted"]]
+    for segment, mean in means.items():
+        seg_mean = observed.loc[observed["segment"] == segment, "rev"].mean()
+        assert abs(seg_mean / mean - 1) < 0.03, (segment, seg_mean)
+    # Unlisted -> the historical lognormal(mu=3.5, sigma=0.6) mean, exp(3.5 + 0.18)
+    expected_default = float(np.exp(3.5 + 0.6**2 / 2))
+    assert list(plain_gt.revenue_means.values()) == pytest.approx([expected_default] * 3)
+    assert gt.revenue_sigma == 0.6
