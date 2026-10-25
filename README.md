@@ -66,8 +66,10 @@ On the default simulator (top-decile = targeting the 10% with the highest score)
   with bootstrap confidence intervals
 - **Policy layer**: budget-constrained targeting with expected incremental revenue and a
   marginal-ROI (diminishing returns) curve
-- **Validation harness**: proves — not asserts — that naive targeting fails to beat random,
-  and that uplift modeling beats both, against known simulator ground truth
+- **Validation harness**: proves — not asserts — against known simulator ground truth that,
+  at budget-constrained targeting depths (the top of the ranking), naive targeting fails to
+  beat random and uplift modeling beats both; and reports where those claims stop holding
+  (over the whole ranking, naive beats random and even the CATE learners — see Findings)
 - **Apps**: Streamlit interactive policy simulator; optional FastAPI service layer
 
 ## Architecture
