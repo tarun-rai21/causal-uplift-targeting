@@ -41,7 +41,9 @@ import pandas as pd
 from scipy.stats import norm
 from sqlalchemy import text
 
-_MAPPING_FIELDS = ("segment_mix", "segment_effects", "segment_baseline_offsets", "spend_means")
+_MAPPING_FIELDS = (
+    "segment_mix", "segment_effects", "segment_baseline_offsets", "spend_means", "revenue_means",
+)
 
 
 @dataclass(frozen=True)
@@ -57,6 +59,11 @@ class GroundTruth:
     # None by callers that only need per-segment truth.
     spend_means: Mapping[str, float] = field(default_factory=dict)
     spend_noise_std: float | None = None
+    # Revenue per conversion ~ lognormal with mean revenue_means[s] and
+    # shape revenue_sigma, independent of treatment. Empty / None on
+    # GroundTruths that predate segment-dependent revenue.
+    revenue_means: Mapping[str, float] = field(default_factory=dict)
+    revenue_sigma: float | None = None
 
     def __post_init__(self) -> None:
         for name in _MAPPING_FIELDS:
@@ -72,6 +79,25 @@ class GroundTruth:
 
     def true_treated_probability(self, segment: str) -> float:
         return self.true_control_probability(segment) + self.true_uplift(segment)
+
+    def true_revenue_uplift(self, segment: str) -> float:
+        """Expected incremental revenue per user from treating this segment:
+        effect * revenue per conversion (basket size does not depend on
+        treatment, so the whole uplift comes through conversion)."""
+        return self.true_uplift(segment) * self._revenue_mean(segment)
+
+    def expected_treated_revenue(self, segment: str) -> float:
+        """Expected revenue per TREATED user -- what a conversion-triggered
+        incentive (cashback, discount) is paid against."""
+        return self.true_treated_probability(segment) * self._revenue_mean(segment)
+
+    def _revenue_mean(self, segment: str) -> float:
+        if not self.revenue_means:
+            raise ValueError(
+                "GroundTruth has no revenue_means; it predates segment-dependent "
+                "revenue -- regenerate the pilot"
+            )
+        return self.revenue_means[segment]
 
     def segment_posterior(self, historical_spend: np.ndarray) -> pd.DataFrame:
         """
@@ -117,6 +143,27 @@ class GroundTruth:
             name="true_cate_given_x",
         )
 
+    def economics_given_covariates(self, users_df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Covariate-level truth for the policy layer, user_id-indexed:
+            incremental_revenue = E[tau * m | X] = sum_s P(s|X) tau_s m_s
+            treated_revenue     = E[p1 * m | X]  = sum_s P(s|X) p1_s m_s
+        A cashback policy at rate r costs r * treated_revenue per treated
+        user, so ranking by incremental_revenue / treated_revenue is the
+        best ROI ordering any model could achieve from covariates.
+        """
+        posterior = self.segment_posterior(users_df["historical_spend"].to_numpy())
+        segments = list(posterior.columns)
+        incr = np.array([self.true_revenue_uplift(s) for s in segments])
+        treated = np.array([self.expected_treated_revenue(s) for s in segments])
+        return pd.DataFrame(
+            {
+                "incremental_revenue": posterior.to_numpy() @ incr,
+                "treated_revenue": posterior.to_numpy() @ treated,
+            },
+            index=users_df["user_id"].values,
+        )
+
     def to_dict(self) -> dict:
         """JSON-serializable form (dataclasses.asdict cannot deep-copy the
         MappingProxyType fields)."""
@@ -125,6 +172,7 @@ class GroundTruth:
             "propensity": self.propensity,
             "seed": self.seed,
             "spend_noise_std": self.spend_noise_std,
+            "revenue_sigma": self.revenue_sigma,
         }
         out.update({name: dict(getattr(self, name)) for name in _MAPPING_FIELDS})
         return out

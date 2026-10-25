@@ -16,7 +16,11 @@ def test_validates_a_stored_pilot_end_to_end(engine, small_config_path):
     assert result.n_test == 400  # the persisted test split, not the whole pilot
     assert set(MODELS) <= set(result.oracle.index)
     assert set(result.claims) == set(CLAIMS)
-    assert "Validation report" in format_report([result], header="stored")
+    # Seeded after segment-dependent revenue, with economics stored by the
+    # pipeline -> policy metrics and claims are available, not None.
+    assert result.policy is not None
+    assert all(v is not None for v in result.claims.values())
+    assert "Policy: cashback" in format_report([result], header="stored")
 
 
 def test_stored_pilot_without_model_runs_is_an_error(engine, small_config_path):

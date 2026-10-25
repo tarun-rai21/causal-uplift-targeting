@@ -19,7 +19,9 @@ Generation logic, in order:
    PilotConfig's own validation already guarantees these stay in [0, 1]
    for every segment before a PilotSimulator can even be constructed.
 5. Draw the binary outcome from Bernoulli(conversion probability); if
-   converted, draw revenue from a log-normal distribution.
+   converted, draw revenue from a log-normal distribution whose MEAN is the
+   segment's revenue mean (independent of treatment: the incentive changes
+   whether someone converts, not their basket size).
 """
 
 from __future__ import annotations
@@ -44,6 +46,11 @@ _SEGMENT_SPEND_MEAN = {
 }
 _DEFAULT_SPEND_MEAN = 100.0
 _SPEND_NOISE_STD = 80.0  # deliberately large relative to the mean gaps above
+
+_REVENUE_SIGMA = 0.6
+# Mean of the original lognormal(mu=3.5, sigma=0.6), so a config that does
+# not set segment_revenue_means draws exactly the same revenue as before.
+_DEFAULT_REVENUE_MEAN = float(np.exp(3.5 + _REVENUE_SIGMA**2 / 2))
 
 
 class PilotSimulator:
@@ -72,6 +79,11 @@ class PilotSimulator:
                 s: _SEGMENT_SPEND_MEAN.get(s, _DEFAULT_SPEND_MEAN) for s in cfg.segment_mix
             },
             spend_noise_std=_SPEND_NOISE_STD,
+            revenue_means={
+                s: cfg.segment_revenue_means.get(s, _DEFAULT_REVENUE_MEAN)
+                for s in cfg.segment_mix
+            },
+            revenue_sigma=_REVENUE_SIGMA,
         )
 
         segments = np.array(list(cfg.segment_mix.keys()))
@@ -121,9 +133,15 @@ class PilotSimulator:
         conversion_prob = np.clip(conversion_prob, 0.0, 1.0)
 
         converted = rng.random(n) < conversion_prob
+        # lognormal mean is exp(mu + sigma^2 / 2), so mu = ln(mean) - sigma^2 / 2
+        # makes each segment's expected revenue per conversion exactly its
+        # configured mean. Same number of draws as before, consumed in the
+        # same order, so conversions -- drawn above -- are unaffected.
+        revenue_mean = labels.map(ground_truth.revenue_means).to_numpy()
+        mu = np.log(revenue_mean) - ground_truth.revenue_sigma**2 / 2
         revenue = np.where(
             converted,
-            rng.lognormal(mean=3.5, sigma=0.6, size=n),
+            rng.lognormal(mean=mu, sigma=ground_truth.revenue_sigma),
             0.0,
         )
         outcomes_df = pd.DataFrame({

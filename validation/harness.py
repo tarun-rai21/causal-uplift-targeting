@@ -30,6 +30,39 @@ What each metric is measured against (see data_sim/ground_truth.py):
     qini           observed-outcome Qini coefficient (no oracle), from
                    core/evaluation.py -- the number a real pilot would see
 
+Policy metrics (core/policy.py, cashback on conversion at CASHBACK_RATE):
+every policy gets the same MONEY budget, a share of the true cost of
+treating everyone, and walks its own ranking; the chosen set is scored with
+TRUE economics (incremental revenue minus cashback paid). Two walks:
+
+    net_<b>%              PACED: keep treating in rank order until TRUE
+                          spend reaches the budget -- what a rollout that
+                          enforces the budget on realized cashback gets
+    planned_net_10%       PLANNED: stop where ESTIMATED spend (shared
+                          economics, core/economics.py) reaches the budget --
+                          what a fixed, up-front target list gets
+    planned_spend_ratio   true spend / budget for the planned walk
+    model_net_10%         the model's OWN valuation of its planned list
+                          (sum of tau_hat * m_hat minus estimated cost) --
+                          optimistic by construction; missing for naive
+    ab_net_10%            the planned list valued from randomized test
+                          outcomes (core/policy.outcome_estimate), the
+                          number a real pilot would report
+    ab_covers             1 if that estimate's 95% CI contains the true
+                          planned net, else 0 (mean = coverage rate)
+    ab_ci_width           width of that CI -- calibrated is not the same as
+                          precise
+
+The two differ because of a winner's curse: noise that inflates a user's
+estimated uplift also inflates their estimated cost (the T-learner's tau
+and the economics' p1 share the same fitted mu1), so a planned list
+systematically under-spends. Across all users p1 is unbiased; among the
+users a policy selects it runs high.
+
+Policies: naive (baseline score), t_learner / x_learner (ranked by
+estimated ROI), x_ceiling (true covariate-level ROI and true costs), and
+random (expected value of treating a random budget-sized share).
+
 References: random (expected value of a random list), x_ceiling (ranking
 by true E[tau | X], the best any model can do from covariates), and
 segment_oracle (ranking by hidden segment, unattainable).
@@ -51,7 +84,9 @@ from scipy.stats import spearmanr
 from config.schema import load_pilot_config
 from core.baseline import fit_propensity_model, predict_propensity
 from core.data_split import compute_data_split, subset_to_split
+from core.economics import fit_economics
 from core.evaluation import evaluate_scores
+from core.policy import outcome_estimate, policy_inputs, roi_ranking, select_targets
 from core.t_learner import fit_t_learner
 from core.x_learner import fit_x_learner
 from data_sim.ground_truth import GroundTruth
@@ -64,6 +99,8 @@ MODELS = ("baseline", "t_learner", "x_learner")
 REFERENCES = ("random", "x_ceiling", "segment_oracle")
 SPLIT_SEED = 1
 TEST_SIZE = 0.2
+CASHBACK_RATE = 0.10
+POLICY_BUDGETS = (0.05, 0.10, 0.25, 0.50)
 
 
 # --- fitting ----------------------------------------------------------------
@@ -81,6 +118,7 @@ class SeedRun:
     test_outcomes: pd.DataFrame
     ground_truth: GroundTruth
     scores: dict[str, pd.Series]  # model -> user_id-indexed score on test users
+    economics: pd.DataFrame | None = None  # core/economics.py estimates for test users
 
 
 def run_seed(scenario: str, seed: int, config_path: Path = DEFAULT_CONFIG) -> SeedRun:
@@ -101,7 +139,10 @@ def run_seed(scenario: str, seed: int, config_path: Path = DEFAULT_CONFIG) -> Se
         "t_learner": fit_t_learner(*train, random_state=seed).predict_cate(test_users),
         "x_learner": fit_x_learner(*train, random_state=seed).predict_cate(test_users),
     }
-    return SeedRun(scenario, seed, test_users, test_treatment, test_outcomes, gt, scores)
+    economics = fit_economics(*train, random_state=seed).predict(test_users)
+    return SeedRun(
+        scenario, seed, test_users, test_treatment, test_outcomes, gt, scores, economics
+    )
 
 
 # --- metrics ----------------------------------------------------------------
@@ -145,6 +186,94 @@ def oracle_metrics(
         if m in scores:
             table.loc[m, "rmse"] = float(np.sqrt(((scores[m].loc[ids] - cate_x) ** 2).mean()))
     return table
+
+
+def policy_metrics(
+    run: SeedRun, cashback_rate: float = CASHBACK_RATE
+) -> pd.DataFrame | None:
+    """True value of each policy's chosen targets; None without revenue truth
+    or economics (e.g. a stored pilot seeded before Phase 7)."""
+    gt = run.ground_truth
+    if run.economics is None or not gt.revenue_means:
+        return None
+    ids = run.test_users["user_id"].to_numpy()
+    segments = run.test_users["segment"]
+    true_incr = segments.map(gt.true_revenue_uplift).to_numpy()
+    true_cost = cashback_rate * segments.map(gt.expected_treated_revenue).to_numpy()
+    total_cost = true_cost.sum()
+    econ = run.economics.set_index("user_id").loc[ids]
+    p1 = econ["p_convert_if_treated"].to_numpy()
+    m = econ["revenue_per_conversion"].to_numpy()
+
+    policies = {}
+    for model, score in run.scores.items():
+        s = score.loc[ids].to_numpy()
+        if model == "baseline":
+            policies[model] = policy_inputs(ids, s, p1, m, cashback_rate)
+        else:
+            policies[model] = policy_inputs(
+                ids, roi_ranking(s, p1, cashback_rate), p1, m, cashback_rate, uplift=s
+            )
+    cx = gt.economics_given_covariates(run.test_users).loc[ids]
+    # Passing p1 = E[p1*m|X] with m = 1 makes policy_inputs' cost
+    # r * p1 * m equal the TRUE covariate-level cost r * E[p1*m|X].
+    policies["x_ceiling"] = policy_inputs(
+        ids, cx["incremental_revenue"] / cx["treated_revenue"],
+        cx["treated_revenue"], np.ones(len(ids)), cashback_rate,
+    )
+
+    position = pd.Index(ids)
+    observed_treated = run.test_treatment.set_index("user_id").loc[ids, "treated"].to_numpy()
+    observed_revenue = run.test_outcomes.set_index("user_id").loc[ids, "revenue"].to_numpy()
+
+    def net_of(inputs, budget):
+        chosen = position.get_indexer(select_targets(inputs, budget))
+        return true_incr[chosen].sum() - true_cost[chosen].sum(), true_cost[chosen].sum()
+
+    rows = {}
+    for name, inputs in policies.items():
+        paced = inputs.assign(expected_cost=true_cost)  # same ranking, true spend
+        row = {
+            f"net_{int(p * 100)}%": net_of(paced, p * total_cost)[0] for p in POLICY_BUDGETS
+        }
+        planned_net, planned_spend = net_of(inputs, 0.10 * total_cost)
+        row["planned_net_10%"] = planned_net
+        row["planned_spend_ratio"] = planned_spend / (0.10 * total_cost)
+        chosen = position.get_indexer(select_targets(inputs, 0.10 * total_cost))
+        picked = inputs.iloc[chosen]
+        row["model_net_10%"] = (
+            picked["expected_incremental_revenue"].sum() - picked["expected_cost"].sum()
+            if picked["expected_incremental_revenue"].notna().all() and name != "x_ceiling"
+            else np.nan
+        )
+        ab = outcome_estimate(
+            observed_treated[chosen], observed_revenue[chosen], cashback_rate,
+            n_bootstrap=500, seed=run.seed,
+        )
+        row["ab_net_10%"] = ab["net"]
+        row["ab_covers"] = float(ab["net_lower"] <= planned_net <= ab["net_upper"])
+        row["ab_ci_width"] = ab["net_upper"] - ab["net_lower"]
+        rows[name] = row
+    random_net = {
+        f"net_{int(p * 100)}%": p * (true_incr.sum() - total_cost) for p in POLICY_BUDGETS
+    }
+    rows["random"] = {
+        **random_net, "planned_net_10%": random_net["net_10%"], "planned_spend_ratio": 1.0,
+        "model_net_10%": np.nan, "ab_net_10%": np.nan, "ab_covers": np.nan,
+        "ab_ci_width": np.nan,
+    }
+    columns = [f"net_{int(p * 100)}%" for p in POLICY_BUDGETS]
+    columns += ["planned_net_10%", "planned_spend_ratio", "model_net_10%", "ab_net_10%",
+                "ab_covers", "ab_ci_width"]
+    return pd.DataFrame.from_dict(rows, orient="index")[columns]
+
+
+def _beats_naive_everywhere(r) -> bool:
+    return all(
+        r.policy.loc[m, f"net_{int(p * 100)}%"] > r.policy.loc["baseline", f"net_{int(p * 100)}%"]
+        for m in ("t_learner", "x_learner")
+        for p in POLICY_BUDGETS
+    )
 
 
 def observed_qini(
@@ -201,6 +330,47 @@ CLAIMS = {
             r.oracle.loc["baseline", "whole_curve"] - r.oracle.loc["t_learner", "whole_curve"]
         ),
     ),
+    # Policy claims (None when the run has no revenue truth / economics).
+    "naive_policy_loses_money_10": (
+        "Naive cashback policy loses money at a 10% budget (true net < 0)",
+        lambda r: None if r.policy is None else r.policy.loc["baseline", "net_10%"] < 0,
+    ),
+    "roi_policies_profitable_10": (
+        "Both ROI-ranked policies are profitable at a 10% budget",
+        lambda r: None if r.policy is None else all(
+            r.policy.loc[m, "net_10%"] > 0 for m in ("t_learner", "x_learner")
+        ),
+    ),
+    "roi_policies_beat_random_10": (
+        "Both ROI-ranked policies beat random targeting at a 10% budget",
+        lambda r: None if r.policy is None else all(
+            r.policy.loc[m, "net_10%"] > r.policy.loc["random", "net_10%"]
+            for m in ("t_learner", "x_learner")
+        ),
+    ),
+    "roi_policies_beat_naive_all_budgets": (
+        "Both ROI-ranked policies beat naive at every tested budget",
+        lambda r: None if r.policy is None else _beats_naive_everywhere(r),
+    ),
+    "model_valuation_overstates": (
+        "Models' own valuation overstates the true net of their planned list (a finding)",
+        lambda r: None if r.policy is None else all(
+            r.policy.loc[m, "model_net_10%"] > r.policy.loc[m, "planned_net_10%"]
+            for m in ("t_learner", "x_learner")
+        ),
+    ),
+    "ab_ci_covers_truth": (
+        "Outcome-based 95% CI covers the true net of every planned list (10% budget)",
+        lambda r: None if r.policy is None else bool(
+            r.policy.loc[["baseline", "t_learner", "x_learner"], "ab_covers"].all()
+        ),
+    ),
+    "planned_lists_underspend": (
+        "Planned ROI target lists under-spend the budget (winner's curse; a finding)",
+        lambda r: None if r.policy is None else all(
+            r.policy.loc[m, "planned_spend_ratio"] < 1 for m in ("t_learner", "x_learner")
+        ),
+    ),
 }
 
 
@@ -213,7 +383,8 @@ class SeedResult:
     oracle: pd.DataFrame
     qini: dict[str, float]
     qini_interval: dict[str, tuple[float, float]]
-    claims: dict[str, bool] = field(default_factory=dict)
+    policy: pd.DataFrame | None = None
+    claims: dict[str, bool | None] = field(default_factory=dict)
 
 
 def evaluate_run(run: SeedRun, n_bootstrap: int = 200) -> SeedResult:
@@ -229,8 +400,12 @@ def evaluate_run(run: SeedRun, n_bootstrap: int = 200) -> SeedResult:
         oracle=oracle_metrics(run.test_users, run.ground_truth, run.scores),
         qini={m: r["qini"].estimate for m, r in results.items()},
         qini_interval={m: (r["qini"].lower, r["qini"].upper) for m, r in results.items()},
+        policy=policy_metrics(run),
     )
-    result.claims = {name: bool(pred(result)) for name, (_, pred) in CLAIMS.items()}
+    result.claims = {}
+    for name, (_, pred) in CLAIMS.items():
+        verdict = pred(result)
+        result.claims[name] = None if verdict is None else bool(verdict)
     return result
 
 
@@ -284,14 +459,25 @@ def format_report(results: list[SeedResult], header: str) -> str:
         )
         out.append("### Claims\n\n| claim | holds |\n|---|---|")
         for name, (desc, _) in CLAIMS.items():
-            k = sum(r.claims[name] for r in runs)
-            out.append(f"| {desc} | {k}/{len(runs)} |")
+            verdicts = [r.claims[name] for r in runs if r.claims[name] is not None]
+            held = f"{sum(verdicts)}/{len(verdicts)}" if verdicts else "n/a"
+            out.append(f"| {desc} | {held} |")
         mean = sum(_with_qini(r) for r in runs) / len(runs)
         order = [*MODELS, *REFERENCES]
         out.append(
             f"\n### Metrics (mean over {len(runs)} seeds)\n\n"
             + _markdown_table(mean.loc[[i for i in order if i in mean.index]])
         )
+        policy_runs = [r.policy for r in runs if r.policy is not None]
+        if policy_runs:
+            mean_policy = sum(policy_runs) / len(policy_runs)
+            order = ["baseline", "t_learner", "x_learner", "random", "x_ceiling"]
+            out.append(
+                f"\n### Policy: cashback {CASHBACK_RATE:.0%} on conversion, true net revenue "
+                f"(mean over {len(policy_runs)} seeds; budget = % of true cost to treat "
+                "everyone; net_* = paced on realized spend, planned_* = fixed list "
+                "from estimated costs)\n\n" + _markdown_table(mean_policy.loc[order])
+            )
         out.append("\n### Per-seed top decile and whole-curve area\n")
         per_seed = pd.DataFrame({
             f"seed {r.seed}": {
@@ -331,7 +517,17 @@ def validate_stored_pilot(engine, pilot_id: str, n_bootstrap: int = 200) -> Seed
     test_ids = set.intersection(*(set(s.index) for s in scores.values()))
     subset = [df[df["user_id"].isin(test_ids)].reset_index(drop=True)
               for df in (users, treatment, outcomes)]
-    run = SeedRun("stored", gt.seed, *subset, gt, scores)
+    with engine.connect() as conn:
+        economics = pd.read_sql(
+            text(
+                "SELECT user_id, p_convert_if_treated, revenue_per_conversion "
+                "FROM user_economics WHERE pilot_id = :p"
+            ),
+            conn,
+            params={"p": pilot_id},
+        )
+    has_economics = test_ids <= set(economics["user_id"])
+    run = SeedRun("stored", gt.seed, *subset, gt, scores, economics if has_economics else None)
     return evaluate_run(run, n_bootstrap=n_bootstrap)
 
 
