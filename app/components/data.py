@@ -14,13 +14,17 @@ What a page can show depends on what the pilot has:
 
 from __future__ import annotations
 
+import contextlib
+import io
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 from sqlalchemy import text
 
-from core.evaluation import latest_runs_per_model_type
+from config.schema import DEFAULT_CONFIG_PATH
+from core.evaluation import evaluate_model_runs, latest_runs_per_model_type, persist_evaluation
 from core.policy import build_policy, load_policy_frame, policy_curve, select_targets
 from data_sim.ground_truth import GroundTruth, load_ground_truth
 
@@ -48,6 +52,36 @@ def list_pilots(engine) -> pd.DataFrame:
             ),
             conn,
         )
+
+
+def ready_pilots(engine) -> pd.DataFrame:
+    """Pilots every tab can render: all three model runs plus economics."""
+    pilots = list_pilots(engine)
+    return pilots[(pilots["n_model_types"] == 3) & (pilots["n_economics"] > 0)]
+
+
+def build_demo_pilot(
+    engine, config_path: str | Path = DEFAULT_CONFIG_PATH, n_bootstrap: int = 500
+) -> str:
+    """
+    Seed, train and evaluate one simulated pilot -- the same three commands
+    the README lists, run in-process. Lets a fresh deployment (e.g.
+    Streamlit Community Cloud, which starts with an empty DB) populate
+    itself. Writes to the DB `engine` points at; the seed step resolves the
+    same DATABASE_URL.
+    """
+    from core.pipeline import run_pipeline
+    from db.seed import seed_demo_pilot
+
+    with contextlib.redirect_stdout(io.StringIO()):  # seed prints a summary
+        pilot_id = seed_demo_pilot(config_path)
+    run_pipeline(engine, pilot_id)
+    evaluations, _ = evaluate_model_runs(
+        engine, latest_runs_per_model_type(engine, pilot_id), n_bootstrap=n_bootstrap
+    )
+    for ev in evaluations:
+        persist_evaluation(engine, ev, n_bootstrap=n_bootstrap, ci_level=0.95, seed=42)
+    return pilot_id
 
 
 def ground_truth_or_none(engine, pilot_id: str) -> GroundTruth | None:

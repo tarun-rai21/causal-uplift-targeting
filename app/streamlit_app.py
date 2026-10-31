@@ -12,7 +12,9 @@ calls the project's own modules.
 
 from __future__ import annotations
 
+import os
 import sys
+import threading
 from pathlib import Path
 
 # `streamlit run app/streamlit_app.py` puts app/ (not the repo root) on
@@ -33,6 +35,13 @@ def _engine(db_url: str):
     engine = get_engine()
     init_schema(engine)
     return engine
+
+
+@st.cache_resource
+def _build_lock() -> threading.Lock:
+    """One lock per server process: two visitors arriving at an empty
+    deployment at once must not both build a demo pilot."""
+    return threading.Lock()
 
 
 @st.cache_data(show_spinner="Building policy curves (bootstrap per budget point)...")
@@ -65,8 +74,7 @@ db_url = get_database_url()
 engine = _engine(db_url)
 mode = "dark" if getattr(st.context.theme, "type", None) == "dark" else "light"
 
-pilots = data.list_pilots(engine)
-ready = pilots[(pilots["n_model_types"] == 3) & (pilots["n_economics"] > 0)]
+ready = data.ready_pilots(engine)
 
 st.title("Who should get the cashback?")
 st.caption(
@@ -75,10 +83,21 @@ st.caption(
 )
 
 if ready.empty:
+    # A fresh deployment starts with an empty DB. UPLIFT_AUTO_DEMO=1 (e.g. a
+    # Streamlit Cloud secret) builds the demo pilot on first visit; otherwise
+    # the visitor can trigger it -- nothing is built behind anyone's back.
     st.info(
         "No pilot with trained models yet. From the repo root run:\n\n"
-        "```\npython -m db.seed\npython -m core.pipeline\npython -m core.evaluation\n```"
+        "```\npython -m db.seed\npython -m core.pipeline\npython -m core.evaluation\n```\n\n"
+        "or build the demo pilot right here."
     )
+    auto = os.environ.get("UPLIFT_AUTO_DEMO") == "1"
+    if auto or st.button("Build the demo pilot (simulate 50,000 users, train, evaluate)"):
+        with _build_lock(), st.spinner("Building the demo pilot -- about 1-2 minutes, once..."):
+            if data.ready_pilots(engine).empty:  # another session may have built it
+                data.build_demo_pilot(engine)
+        st.cache_data.clear()
+        st.rerun()
     st.stop()
 
 with st.sidebar:
