@@ -245,4 +245,4 @@ cashback, scheduled retraining, and monitoring of holdout-based value over time.
 
 ## License
 
-TBD.
+[MIT](LICENSE).
