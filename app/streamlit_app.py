@@ -91,9 +91,10 @@ with st.sidebar:
     rate_pct = st.slider("Cashback rate (% of revenue, paid per treated conversion)", 1, 30, 10)
     budget_pct = st.slider("Budget (% of the cost of treating everyone)", 5, 100, 10, step=5)
     floor = 1.0 if st.toggle("Only treat users expected to break even (ROI ≥ 1)") else None
-    st.caption(
-        f"Data: `{db_url.split('///')[-1] if db_url.startswith('sqlite') else 'DATABASE_URL'}`"
-    )
+    # File name only: a full local path leaks the machine's directory layout
+    # into anything screenshotted or shared.
+    source = Path(db_url.split("///")[-1]).name if db_url.startswith("sqlite") else "DATABASE_URL"
+    st.caption(f"Data: `{source}`")
 
 rate = rate_pct / 100
 views = _policy_views(db_url, pilot_id, rate, floor)
