@@ -1,0 +1,8 @@
+# Streamlit settings for this app, locally and on Streamlit Community Cloud.
+
+[browser]
+gatherUsageStats = false
+
+[client]
+# Hide developer-only menu items from public viewers.
+toolbarMode = "minimal"

@@ -106,7 +106,61 @@ def test_app_renders_every_tab_without_errors(trained_pilot):
     assert not at.exception, at.exception
 
 
-def test_app_explains_what_to_run_when_db_is_empty(engine):
+def test_app_explains_what_to_run_when_db_is_empty(engine, monkeypatch):
+    monkeypatch.delenv("UPLIFT_AUTO_DEMO", raising=False)
     at = AppTest.from_file(APP, default_timeout=60).run()
     assert not at.exception, at.exception
     assert "python -m core.pipeline" in at.info[0].value
+    assert at.button[0].label.startswith("Build the demo pilot")  # nothing built yet
+
+
+def test_build_demo_pilot_leaves_an_app_ready_pilot(engine, small_config_path):
+    """What a fresh deployment runs: afterwards the pilot has all three model
+    runs, economics and stored evaluations -- everything every tab needs."""
+    pilot_id = data.build_demo_pilot(engine, small_config_path, n_bootstrap=20)
+    pilots = data.list_pilots(engine).set_index("pilot_id")
+    assert pilots.loc[pilot_id, "n_model_types"] == 3
+    assert pilots.loc[pilot_id, "n_economics"] > 0
+    assert pilots.loc[pilot_id, "simulated"] == 1
+    scores, curves = data.qini_view(engine, pilot_id)
+    assert len(scores) == 3 and len(curves) == 3 * 101
+
+
+@pytest.fixture
+def small_demo_build(monkeypatch, small_config_path):
+    """The app's demo build, shrunk to the 2,000-user config so the real build
+    path (lock, re-check, build, rerun) can run in a test."""
+    real_build = data.build_demo_pilot
+    calls = []
+
+    def small_build(engine, *args, **kwargs):
+        calls.append(1)
+        return real_build(engine, small_config_path, n_bootstrap=20)
+
+    monkeypatch.setattr(data, "build_demo_pilot", small_build)
+    return calls
+
+
+def test_empty_deployment_builds_demo_on_first_visit_when_auto(engine, monkeypatch,
+                                                                small_demo_build):
+    """What Streamlit Cloud runs with the UPLIFT_AUTO_DEMO=1 secret: the first
+    visit builds the demo pilot and the page renders it, no clicks needed."""
+    monkeypatch.setenv("UPLIFT_AUTO_DEMO", "1")
+    at = AppTest.from_file(APP, default_timeout=300).run()
+    assert not at.exception, at.exception
+    assert small_demo_build == [1]
+    assert len(at.metric) == 4 and len(at.tabs) == 4
+
+    at.run()  # a later rerun / visitor must not build again
+    assert not at.exception, at.exception
+    assert small_demo_build == [1]
+
+
+def test_build_button_builds_demo(engine, monkeypatch, small_demo_build):
+    monkeypatch.delenv("UPLIFT_AUTO_DEMO", raising=False)
+    at = AppTest.from_file(APP, default_timeout=300).run()
+    assert small_demo_build == []  # nothing built until asked
+    at.button[0].click().run()
+    assert not at.exception, at.exception
+    assert small_demo_build == [1]
+    assert len(at.metric) == 4

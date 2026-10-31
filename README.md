@@ -147,6 +147,18 @@ pytest -m slow -s             # statistical validation against ground truth
 `pip install -r requirements-validation.txt` also enables the exact cross-check against
 `causalml`. That test is skipped otherwise, which keeps CI light.
 
+### Deploying the app (Streamlit Community Cloud)
+
+1. At [share.streamlit.io](https://share.streamlit.io), create an app from this repo:
+   branch `main`, main file `app/streamlit_app.py`.
+2. Under **Advanced settings**, choose **Python 3.12**. Under **Secrets**, add
+   `UPLIFT_AUTO_DEMO = "1"`.
+3. Deploy. The cloud filesystem starts empty, so the first visit builds the demo pilot
+   in-process: it simulates 50,000 users, trains, and evaluates, taking about 1.5 minutes
+   locally. A lock makes sure concurrent visitors don't trigger a second build. Later
+   visits are instant until the app restarts. Without the secret, the page offers a
+   button for the same build.
+
 ## Project layout
 
 | Path | What it does |
