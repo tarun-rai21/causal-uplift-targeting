@@ -14,6 +14,11 @@ from typing import Callable
 
 from sklearn.ensemble import GradientBoostingClassifier, GradientBoostingRegressor
 
+# Names recorded in model_runs.base_learner. A known vocabulary rather than
+# free text, so stored runs can be grouped and compared reliably.
+DEFAULT_BASE_LEARNER_NAME = "gradient_boosting"
+KNOWN_BASE_LEARNERS = {DEFAULT_BASE_LEARNER_NAME}
+
 # Maps random_state -> an unfitted classifier exposing fit/predict_proba.
 BaseLearnerFactory = Callable[[int], object]
 # Maps random_state -> an unfitted regressor exposing fit/predict.

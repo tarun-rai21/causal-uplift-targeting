@@ -18,16 +18,12 @@ SQLAlchemy==2.0.51
 pydantic==2.13.4
 PyYAML==6.0.3
 
-# App / viz (needed from Phase 9, pinned now for reproducibility)
+# App / viz (app/streamlit_app.py)
 streamlit==1.59.2
 plotly==6.9.0
 
-# API layer (optional, Phase 8)
-fastapi==0.139.0
-uvicorn==0.51.0
-
-# Testing
-pytest==9.1.1
+# Testing tools live in requirements-dev.txt; the optional Phase 8 API was
+# not built, so its fastapi/uvicorn pins were removed rather than carried.
 
 # NOTE: causalml is intentionally NOT pinned here -- it lives in
 # requirements-validation.txt, used only by the Phase 5 cross-check test

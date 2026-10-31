@@ -73,3 +73,21 @@ def test_data_splits_table_has_expected_columns(monkeypatch):
         result = conn.execute(text("PRAGMA table_info(data_splits)"))
         columns = {row[1] for row in result}
     assert {"user_id", "pilot_id", "split", "split_seed"}.issubset(columns)
+
+
+def test_database_url_env_var_beats_dotenv_file(monkeypatch, tmp_path):
+    """A real environment variable must win over a .env file, so tests and
+    deployments that set DATABASE_URL are never silently redirected."""
+    import db.connection as connection
+
+    env_file_dir = tmp_path / "repo"
+    env_file_dir.mkdir()
+    (env_file_dir / ".env").write_text("DATABASE_URL=sqlite:///from_dotenv.db")
+    monkeypatch.setattr(connection, "_DEFAULT_SQLITE_PATH", env_file_dir / "causal_uplift.db")
+
+    monkeypatch.setenv("DATABASE_URL", "sqlite:///from_env.db")
+    assert connection.get_database_url() == "sqlite:///from_env.db"
+
+    monkeypatch.delenv("DATABASE_URL")
+    assert connection.get_database_url() == "sqlite:///from_dotenv.db"
+    monkeypatch.delenv("DATABASE_URL")  # load_dotenv set it; don't leak to other tests

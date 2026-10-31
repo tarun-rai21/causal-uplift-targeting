@@ -53,11 +53,19 @@ def test_rejects_predictions_for_unknown_users(engine):
 
 def test_rejects_bad_model_type(engine):
     with pytest.raises(ValueError, match="model_type"):
-        persist_model_run(engine, "p1", "s_learner", "gbc", pd.Series([0.1], index=["u1"]))
+        persist_model_run(
+            engine, "p1", "s_learner", "gradient_boosting", pd.Series([0.1], index=["u1"])
+        )
 
 
 def test_rejects_duplicate_user_ids(engine):
     with pytest.raises(ValueError, match="duplicates"):
         persist_model_run(
-            engine, "p1", "t_learner", "gbc", pd.Series([0.1, 0.2], index=["u1", "u1"])
+            engine, "p1", "t_learner", "gradient_boosting",
+            pd.Series([0.1, 0.2], index=["u1", "u1"]),
         )
+
+
+def test_rejects_unknown_base_learner(engine):
+    with pytest.raises(ValueError, match="base_learner"):
+        persist_model_run(engine, "p1", "t_learner", "gbc", pd.Series([0.1], index=["u1"]))

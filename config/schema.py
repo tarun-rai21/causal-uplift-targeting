@@ -62,6 +62,7 @@ from __future__ import annotations
 
 import math
 import warnings
+from pathlib import Path
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -191,7 +192,12 @@ class PilotConfig(BaseModel):
         return self
 
 
-def load_pilot_config(path: str) -> PilotConfig:
+# Absolute, so nothing depends on the working directory a command or test
+# happens to be launched from.
+DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent / "default_config.yaml"
+
+
+def load_pilot_config(path: str | Path = DEFAULT_CONFIG_PATH) -> PilotConfig:
     """Load and validate a YAML pilot config file."""
     with open(path, encoding="utf-8") as f:
         raw = yaml.safe_load(f)

@@ -30,12 +30,13 @@ from sqlalchemy import text
 from core.baseline import fit_propensity_model, predict_propensity
 from core.data_split import compute_data_split, load_split_user_ids, persist_split
 from core.economics import fit_economics
+from core.learners import DEFAULT_BASE_LEARNER_NAME
 from core.model_store import persist_model_run
 from core.policy import persist_economics
 from core.t_learner import fit_t_learner
 from core.x_learner import fit_x_learner
 
-BASE_LEARNER = "gradient_boosting"  # core/learners.default_base_learner
+BASE_LEARNER = DEFAULT_BASE_LEARNER_NAME
 
 
 def load_pilot_frames(

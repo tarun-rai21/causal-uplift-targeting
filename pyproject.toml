@@ -6,6 +6,24 @@ version = "0.1.0"
 description = "Uplift modeling for budget-constrained incentive targeting"
 requires-python = ">=3.12"  # numpy 2.5 / scipy 1.18 pins require 3.12
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+dynamic = ["dependencies"]
+
+[tool.setuptools.dynamic]
+# requirements.txt stays the single source of truth for the pins.
+dependencies = { file = ["requirements.txt"] }
+
+[tool.setuptools.packages.find]
+# Explicit: a flat layout with several top-level packages makes setuptools'
+# auto-discovery refuse to build ("Multiple top-level packages discovered").
+include = ["config*", "core*", "data_sim*", "db*", "validation*", "app*"]
+
+[tool.setuptools.package-data]
+# Non-Python files the code loads from next to its modules.
+config = ["*.yaml"]
+db = ["*.sql"]
+app = ["*.md"]
 
 [tool.pytest.ini_options]
 markers = [
@@ -22,5 +40,5 @@ target-version = "py312"
 select = ["E", "F", "I", "W"]
 
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]  # 77+: SPDX `license` string and `license-files`
 build-backend = "setuptools.build_meta"

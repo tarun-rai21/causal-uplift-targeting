@@ -154,7 +154,7 @@ def test_economics_recover_segment_revenue_and_treated_conversion():
     from core.economics import fit_economics
     from data_sim.pilot_simulator import PilotSimulator
 
-    cfg = load_pilot_config("config/default_config.yaml").model_copy(update={"n_users": 20_000})
+    cfg = load_pilot_config().model_copy(update={"n_users": 20_000})
     users, treatment, outcomes, gt = PilotSimulator(cfg).generate()
     split = compute_data_split(treatment, outcomes, "p", test_size=0.2, split_seed=1)
     train = subset_to_split(split, "train", users, treatment, outcomes)

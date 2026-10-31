@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS model_runs (
     model_run_id TEXT PRIMARY KEY,
     pilot_id TEXT NOT NULL REFERENCES pilots(pilot_id),
     model_type TEXT NOT NULL,          -- 'baseline' | 't_learner' | 'x_learner'
-    base_learner TEXT NOT NULL,        -- 'gradient_boosting' | 'logistic_regression'
+    base_learner TEXT NOT NULL,        -- one of core/learners.KNOWN_BASE_LEARNERS
     trained_at TIMESTAMP NOT NULL
 );
 

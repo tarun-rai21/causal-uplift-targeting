@@ -20,17 +20,15 @@ Marked slow (~40s: 200 paired bootstrap draws over four 250k-user curves).
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import numpy as np
 import pandas as pd
 import pytest
 
-from config.schema import load_pilot_config
+from config.schema import DEFAULT_CONFIG_PATH, load_pilot_config
 from core.evaluation import evaluate_scores
 from data_sim.pilot_simulator import PilotSimulator
 
-_DEFAULT_CONFIG = Path(__file__).resolve().parent.parent / "config" / "default_config.yaml"
+_DEFAULT_CONFIG = DEFAULT_CONFIG_PATH
 
 
 def _true_area(tau: np.ndarray, user_ids: np.ndarray, score: np.ndarray) -> float:

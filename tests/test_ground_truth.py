@@ -12,7 +12,7 @@ from validation.oracle_evaluation import covariate_ceiling_target_ids, true_incr
 
 @pytest.fixture(scope="module")
 def big_pilot():
-    cfg = load_pilot_config("config/default_config.yaml").model_copy(
+    cfg = load_pilot_config().model_copy(
         update={"n_users": 200_000, "seed": 3}
     )
     users_df, _, _, gt = PilotSimulator(cfg).generate()

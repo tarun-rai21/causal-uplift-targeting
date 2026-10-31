@@ -10,7 +10,8 @@ query-building — this is a deliberate SQL-fluency signal (per the spec,
 Section 3) and keeps the analytical queries (Qini-curve input construction,
 model comparison) visible and reviewable as SQL, not abstracted away.
 
-DATABASE_URL environment variable controls the backend:
+DATABASE_URL environment variable controls the backend (it may also be set
+in a git-ignored .env file at the repo root; a real environment variable wins):
     - unset -> local SQLite file at ./causal_uplift.db (zero-setup dev default)
     - set to a Postgres DSN -> one-line swap to Postgres for production parity
 
@@ -22,6 +23,7 @@ this file's job stays narrow: "how do we connect," not "what do we ask."
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
 from sqlalchemy import Engine, create_engine, event, text
 
 _DEFAULT_SQLITE_PATH = Path(__file__).resolve().parent.parent / "causal_uplift.db"
@@ -30,6 +32,7 @@ _SCHEMA_PATH = Path(__file__).resolve().parent / "schema.sql"
 
 def get_database_url() -> str:
     """Resolve the DB connection string, defaulting to a local SQLite file."""
+    load_dotenv(_DEFAULT_SQLITE_PATH.parent / ".env", override=False)
     return os.environ.get("DATABASE_URL", f"sqlite:///{_DEFAULT_SQLITE_PATH}")
 
 
