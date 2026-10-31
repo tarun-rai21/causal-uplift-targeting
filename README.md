@@ -128,9 +128,10 @@ why the simulator is where the policy logic is proven.
 Requires Python 3.12+.
 
 ```bash
-pip install -r requirements-dev.txt
+pip install -r requirements-dev.txt    # or `pip install .` to install it as a package
 
-python -m db.seed             # simulate a 50k-user pilot into ./causal_uplift.db (or $DATABASE_URL)
+python -m db.seed             # simulate a 50k-user pilot into ./causal_uplift.db (or $DATABASE_URL;
+                              #   also read from a .env file); --config PATH for another pilot spec
 python -m core.pipeline       # split it, train baseline + T/X-learner + economics, store test-set predictions
 python -m core.evaluation     # Qini / AUUC with paired-bootstrap CIs
 python -m core.policy         # budget curves: who to target, valued from the holdout
@@ -166,9 +167,14 @@ pytest -m slow -s             # statistical validation against ground truth
 
 ## Testing
 
-- **Fast suite (CI on Python 3.12):** 114 tests. They cover the simulator, closed-form
+- **Fast suite (CI on Python 3.12):** 117 tests. They cover the simulator, closed-form
   tests of each learner's arithmetic with deterministic stand-in models, the exact
   `causalml` cross-check, and database round-trips with foreign keys enforced.
+- **End to end:** one test runs every real entrypoint as its own process, from seed
+  through pipeline, evaluation, policy and validation to the app, against one database
+  and from an unrelated working directory. After each stage it checks the database
+  state the next stage depends on, so a broken contract between stages fails even when
+  each stage's own tests pass.
 - **App and pipeline tests:** Streamlit `AppTest` runs the full page against a freshly
   seeded and trained database. A pipeline test proves the database path gives
   bit-identical predictions to training in memory.
@@ -240,8 +246,8 @@ cashback, scheduled retraining, and monitoring of holdout-based value over time.
 | 6 | Multi-seed ground-truth validation harness and standing report | ✅ |
 | 7 | Segment revenue, cashback economics, budget-constrained ROI policy | ✅ |
 | 9 | Streamlit policy simulator and this write-up | ✅ |
+| 10 | End-to-end test through every real entrypoint; packaging and cleanups | ✅ |
 | 8 | FastAPI service layer (optional) | not built |
-| 10 | One end-to-end test across seed → pipeline → evaluation → policy → harness | partly covered by pipeline, app and stored-pilot tests |
 
 ## License
 
