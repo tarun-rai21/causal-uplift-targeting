@@ -33,6 +33,7 @@ python -m validation.harness --out reports/validation_report.md
                            # multi-seed ground-truth validation of every model and claim
 python -m validation.harness --pilot-id <id>   # validate a stored pilot vs its stored truth
 python -m core.policy --cashback-rate 0.1      # budget curves: who to target, valued from outcomes
+streamlit run app/streamlit_app.py             # interactive policy simulator over the stored pilots
 pytest -m "not slow"       # fast suite (what CI runs)
 pytest -m slow -s          # statistical validation against simulator ground truth
 ```
