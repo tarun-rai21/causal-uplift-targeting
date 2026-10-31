@@ -1,161 +1,248 @@
 # Causal Uplift Targeting
 
-Uplift modeling system for budget-constrained incentive targeting.
+[![CI](https://github.com/tarun-rai21/causal-uplift-targeting/actions/workflows/ci.yml/badge.svg)](https://github.com/tarun-rai21/causal-uplift-targeting/actions/workflows/ci.yml)
+
+**Who should get the cashback?** This project targets an incentive at the people who
+convert *because of* it, not at the people who would have converted anyway. It then
+proves, against known ground truth, how much that is worth and where it stops working.
+
+![Streamlit policy simulator: true net revenue by budget for naive, T-learner and X-learner policies, each policy valued honestly against the model's own claim, and the true segments each policy targets](docs/images/policy_simulator.png)
+
+## The result in four numbers
+
+At a 10% budget, with cashback at 10% of revenue, means over 5 simulator seeds
+([full report](reports/validation_report.md)):
+
+| Targeting policy | True net revenue |
+|---|---|
+| **Naive**: target the most likely to convert | **−364**: loses money, in every seed |
+| Random targeting | +471 |
+| **T-learner**, ranked by estimated ROI | **+849** |
+| **X-learner**, ranked by estimated ROI | **+871** |
+| Best ranking possible from the observable data | +1,343 |
+
+The models' *own* estimate of the T-learner list's value is **3,010**. Its true value is
+**736**. That gap is why every number in this project is checked against the truth
+instead of taken from the model.
 
 ## The problem
 
-Standard practice targets incentives (discounts, cashback, fee waivers) at customers with
-the highest predicted probability of converting. This is the wrong quantity: it targets
-"sure things" who would have converted anyway, and misses "persuadables" who convert
-*only because* of the incentive. The right quantity is the conditional average treatment
-effect (CATE) — the incremental probability of conversion the incentive itself causes —
-not the raw conversion probability.
+Standard practice ranks customers by predicted probability of converting and gives the
+incentive to the top of the list. Under a cashback that is paid on **every treated
+conversion**, that list is full of the wrong people:
 
-This project builds that estimation pipeline end to end, on simulated pilot data with
-known ground-truth heterogeneity, so every claim it makes is checkable rather than
-asserted.
+| Segment (hidden from every model) | Converts without cashback | Effect of the cashback |
+|---|---|---|
+| **Persuadable** | rarely (8%) | **+15 pts**: who the incentive is for |
+| **Sure thing** | often (40%) | +1 pt, yet they collect the cashback |
+| **Lost cause** | almost never (2%) | none |
+| **Sleeping dog** | sometimes (15%) | **−5 pts**: the offer puts them off |
 
-## Status
+The quantity that matters is the conditional average treatment effect (CATE),
+τ(x) = E[Y(1) − Y(0) | X = x]: the conversion the incentive itself causes. Ranking by
+P(convert) instead puts sure-things first. In this simulator, 72% of the naive top decile
+are sure-things.
 
-🚧 **Under active development.** This README will be replaced with full results
-(validation numbers, Qini comparisons, screenshots, FAQ) once the pipeline is built and
-validated. Currently in early scaffolding — see the roadmap below.
+## How it works
+
+```mermaid
+flowchart LR
+    CFG["config/<br/>validated pilot spec"] --> SIM["data_sim/<br/>randomized pilot +<br/>frozen ground truth"]
+    SIM --> DB[("db/<br/>SQLite or Postgres")]
+    DB --> PIPE["core/pipeline<br/>split · baseline · T-/X-learner<br/>· economics"]
+    PIPE --> DB
+    DB --> EVAL["core/evaluation<br/>Qini · AUUC · paired bootstrap"]
+    DB --> POL["core/policy<br/>ROI ranking under a budget<br/>valued from the holdout"]
+    EVAL --> APP["app/<br/>Streamlit simulator"]
+    POL --> APP
+    SIM -. truth .-> HARN["validation/harness<br/>every claim × seeds × scenarios"]
+    PIPE -.-> HARN
+```
+
+1. **Simulate a randomized pilot** with known per-segment effects, segment-dependent
+   revenue, and covariates that *overlap* across segments. The segment itself is never
+   a feature.
+2. **Estimate uplift.** The T-learner fits P(convert) separately per arm and subtracts.
+   The X-learner imputes each user's effect from the other arm's model, then
+   combines the two estimates weighted by the known assignment probability. Both are
+   hand-implemented on the same gradient-boosting base learner as the naive baseline, so
+   differences come from the estimand, not model capacity.
+3. **Evaluate without the truth.** Qini curves, the Qini coefficient and AUUC, matched
+   exactly against `causalml`. A paired bootstrap gives a confidence interval for every
+   score and every model-vs-model difference.
+4. **Decide under a budget.** Treating user i costs rate × p₁(x) × m(x) in cashback
+   (p₁ = P(convert | treated), m = revenue per conversion) and earns τ(x) × m(x).
+   Users are ranked by **ROI = τ / (rate × p₁)** and targeted down the list until the
+   budget is spent.
+5. **Value it honestly.** Models choose *who* to target. The randomized holdout says
+   *what it's worth*: within the targeted users, compare treated and control revenue.
+6. **Validate everything against the truth**, across 5 seeds × 2 scenarios (balanced 50/50
+   and imbalanced 20/80 treatment), reporting each claim as "holds in k/n runs".
+
+## Findings
+
+All numbers are 5-seed means on 10,000 held-out users per run. "Top decile" means
+targeting the 10% with the highest score. Full per-seed tables are in
+[`reports/validation_report.md`](reports/validation_report.md).
+
+**1. Naive targeting fails exactly where budgets bite.** On true incremental conversions
+from the top decile, naive scores 29.9 against random's 32.4: at or below random in 5/5
+seeds. The T-learner scores 39.0 and the X-learner 36.4, both beating naive in 5/5 seeds.
+The T-learner captures 63% of the lift that is achievable from the observable data
+(ceiling 42.7).
+
+**2. ...but not over the whole ranking.** On true whole-curve area, naive (19.1) beats
+the T-learner (9.6) and the X-learner (11.1) in 5/5 seeds. Rank correlation with the true
+E[τ|X] agrees: naive 0.67 vs 0.29 and 0.38. Conversion propensity tracks spend, and spend
+is a decent proxy for uplift everywhere except the very top, where the sure-things sit.
+*Which model is better depends on the budget*, which is the decision the policy layer
+makes.
+
+**3. A better estimator is not automatically a better targeter.** The X-learner has
+lower error against E[τ|X] than the T-learner in 10/10 runs (RMSE 0.027 vs 0.039). But it
+wins top-decile targeting only when treatment is imbalanced (4/5 at 20/80; it loses 4/5
+at 50/50): its second-stage regression smooths the top of the ranking.
+
+**4. Under cashback, naive targeting loses money; ROI ranking doesn't.** Naive's true net
+at a 10% budget is negative in 10/10 runs, and its average is negative at every tested
+budget (5–50%), which is worse than targeting at random. Both ROI-ranked policies are
+profitable at 10% and beat naive at every tested budget, in 10/10 runs.
+
+**5. Models overstate their own policies about 4×.** Summing a model's estimated uplift
+over the users *it selected* inherits that selection: a winner's curse (5/5 seeds, both
+scenarios). The same noise inflates selected users' estimated costs, so target lists
+fixed in advance under-spend (only 68% of budget for the T-learner at 20/80). Pacing on
+realized cashback recovers the shortfall.
+
+**6. Honest valuation is calibrated but data-hungry.** On the held-out users, the 95%
+interval for a policy's net covers the truth at about the nominal rate. But it is roughly
+±2,500 wide around true values of a few hundred, and Qini intervals (about ±20) are
+wider than the gaps between trained models. Observed Qini ranked naive vs T-learner the
+wrong way in 7 of 10 runs. A 10k-user holdout cannot separate close policies, which is
+why the simulator is where the policy logic is proven.
+
+![Ground-truth check page: README claims evaluated on the stored pilot, and ranking quality against the truth](docs/images/ground_truth_check.png)
 
 ## Running it
 
-Requires Python 3.12+ (`pip install -r requirements-dev.txt`). From the repo root:
+Requires Python 3.12+.
 
 ```bash
-python -m db.seed          # simulate a pilot into ./causal_uplift.db (or $DATABASE_URL)
-python -m core.pipeline    # split it, train baseline + T/X-learner, persist test-set predictions
-python -m core.evaluation  # Qini / AUUC with paired bootstrap CIs; persists curves + scores
-python -m validation.harness --out reports/validation_report.md
-                           # multi-seed ground-truth validation of every model and claim
-python -m validation.harness --pilot-id <id>   # validate a stored pilot vs its stored truth
-python -m core.policy --cashback-rate 0.1      # budget curves: who to target, valued from outcomes
-streamlit run app/streamlit_app.py             # interactive policy simulator over the stored pilots
-pytest -m "not slow"       # fast suite (what CI runs)
-pytest -m slow -s          # statistical validation against simulator ground truth
+pip install -r requirements-dev.txt
+
+python -m db.seed             # simulate a 50k-user pilot into ./causal_uplift.db (or $DATABASE_URL)
+python -m core.pipeline       # split it, train baseline + T/X-learner + economics, store test-set predictions
+python -m core.evaluation     # Qini / AUUC with paired-bootstrap CIs
+python -m core.policy         # budget curves: who to target, valued from the holdout
+streamlit run app/streamlit_app.py   # the interactive simulator above
+
+python -m validation.harness --out reports/validation_report.md   # ~2 min, all claims × seeds × scenarios
+python -m validation.harness --pilot-id <id>                       # one stored pilot vs its stored truth
+
+pytest -m "not slow"          # fast suite (what CI runs)
+pytest -m slow -s             # statistical validation against ground truth
 ```
 
-`pip install -r requirements-validation.txt` additionally enables the exact
-cross-check against `causalml` (skipped otherwise).
+`pip install -r requirements-validation.txt` also enables the exact cross-check against
+`causalml`. That test is skipped otherwise, which keeps CI light.
 
-## Findings so far
+## Project layout
 
-Generated by the validation harness; full per-seed numbers in
-[`reports/validation_report.md`](reports/validation_report.md). On the default simulator
-(top-decile = targeting the 10% with the highest score):
-
-- **Naive targeting fails where budgets bite.** Its top decile is 72% sure-things and
-  lands at or below random on true incremental conversions (5/5 seeds).
-- **CATE learners win at the top.** The T-learner's top decile beats the baseline in 5/5
-  seeds and captures ~60% of the lift achievable from observable covariates.
-- **But not over the whole ranking.** On true whole-curve area the naive baseline beats
-  both learners (5/5 seeds): ranking by conversion propensity tracks spend, which is a
-  decent proxy for uplift everywhere except the very top. Which model is "better"
-  depends on the budget -- exactly what the Phase 7 policy layer has to decide.
-- **The X-learner estimates better, but doesn't always target better.** It had lower
-  error than the T-learner in 10/10 runs, but won top-decile targeting only under an
-  imbalanced pilot (4/5 at e=0.2, lost 4/5 at e=0.5).
-- **Under a cashback incentive, naive targeting loses money.** Paying cashback on every
-  treated conversion makes sure-things expensive (they convert anyway), so the naive
-  policy's true net is negative at every tested budget (5/5 seeds, both scenarios) --
-  worse than targeting at random. Ranking by estimated ROI, tau / (rate x P(convert |
-  treated)), is profitable and beats naive at every budget in every run.
-- **Models overstate their own policies ~4x.** A model's sum of estimated uplift over the
-  users it selected is inflated by that selection (winner's curse). The same noise also
-  inflates selected users' estimated costs, so fixed target lists under-spend; pacing
-  spend on realized cashback recovers the shortfall. Honest valuation comes from the
-  randomized holdout: its 95% intervals cover the truth at about the nominal rate, but
-  are roughly +/-2,500 around true nets of a few hundred -- a 10k-user holdout cannot
-  tell a profitable cashback policy from a losing one.
-- **Qini needs much more data than the oracle.** On a 10k-user test set its intervals
-  (about +/-20) are wider than the real gaps between trained models; it recovers the
-  true ordering of targeting rules reliably only at a few hundred thousand users.
-
-## Planned architecture
-
-- **Data layer**: configurable pilot simulator with known per-segment treatment effects
-  (persuadables, sure-things, lost-causes), relational storage (SQLite/Postgres-portable)
-- **Core engine**: naive propensity baseline (kept permanently as a documented wrong-answer
-  contrast), T-learner and X-learner meta-learners hand-implemented on scikit-learn base
-  learners
-- **Evaluation**: Qini curve / Qini coefficient / AUUC, cross-checked against `causalml`,
-  with bootstrap confidence intervals
-- **Policy layer**: budget-constrained targeting with expected incremental revenue and a
-  marginal-ROI (diminishing returns) curve
-- **Validation harness**: proves — not asserts — against known simulator ground truth that,
-  at budget-constrained targeting depths (the top of the ranking), naive targeting fails to
-  beat random and uplift modeling beats both; and reports where those claims stop holding
-  (over the whole ranking, naive beats random and even the CATE learners — see Findings)
-- **Apps**: Streamlit interactive policy simulator; optional FastAPI service layer
-
-## Architecture
-
-```mermaid
-flowchart TB
-    PM["Growth / Marketing PM<br/>sets budget, approves policy"]
-    UI["Streamlit Policy App<br/>Qini curves, targeting simulator"]
-    API["FastAPI Service (optional)<br/>/pilots /models /policy"]
-    POLICY["Policy / Budget Allocator<br/>rank by uplift, expected incremental revenue, ROI curve"]
-
-    subgraph CORE["Core Engine"]
-        direction LR
-        BASE["Baseline (naive)<br/>propensity / response model"]
-        META["T-learner / X-learner<br/>CATE estimation"]
-        EVAL["Evaluation Module<br/>Qini, AUUC, bootstrap CI"]
-    end
-
-    SIM["Pilot Simulator<br/>known heterogeneous ground truth"]
-    DB[("SQLite / Postgres<br/>users, assignments, outcomes, predictions")]
-    VALID["Validation Harness<br/>checks recovered uplift ranking vs. known ground truth"]
-
-    PM --> UI
-    UI --> API
-    API --> POLICY
-    POLICY --> CORE
-    CORE --> DB
-    SIM --> DB
-    DB --> VALID
-    SIM --> VALID
-
-    style CORE fill:#eef6f0,stroke:#2f7a4f
-    style DB fill:#f5f0e6,stroke:#8a6d3b
-    style VALID fill:#f0eef6,stroke:#5a4d8a
-```
-
-The policy layer is deliberately separated from the core engine: it consumes model
-output (predicted uplift per user) but contains no modeling logic itself, so the budget
-objective can be swapped (e.g., maximize revenue vs. maximize conversions vs. a
-minimum-ROI floor) without touching any causal estimation code. The validation harness
-sits outside the request path entirely — it's a standing proof against the simulator's
-known ground truth, not something invoked per user request.
-
-## Roadmap
-
-| Phase | Scope |
+| Path | What it does |
 |---|---|
-| 0 | Environment, repo scaffold, config validation |
-| 1 | Pilot simulator with heterogeneous ground truth |
-| 1.5 | Train/test split module |
-| 2 | Baseline propensity model + naive-vs-random failure proof |
-| 3 | T-learner |
-| 4 | X-learner |
-| 5 | Evaluation module (Qini/AUUC/bootstrap CI) |
-| 6 | Ground-truth validation harness |
-| 7 | Policy / budget allocation module |
-| 8 | API layer (optional) |
-| 9 | Streamlit app + portfolio writeup |
-| 10 | End-to-end integration tests |
+| `config/` | Pydantic-validated pilot spec: segment mix, effects, baselines, revenue; unknown keys are rejected |
+| `data_sim/` | Pilot simulator and `GroundTruth`: per-segment truth, E[τ\|X], covariate-level economics |
+| `db/` | Schema (SQLite / Postgres-portable, foreign keys enforced), connection, seeding |
+| `core/data_split.py` | Train/test split stratified on (treated, converted), stored so every model uses the same holdout |
+| `core/baseline.py` | Naive P(convert) model, kept on purpose as the wrong-answer contrast |
+| `core/t_learner.py`, `core/x_learner.py` | Hand-implemented meta-learners on a shared base learner (`core/learners.py`) |
+| `core/economics.py` | Shared P(convert \| treated) and revenue-per-conversion estimates for costing |
+| `core/evaluation.py` | Qini, AUUC, paired bootstrap; persisted curves and scores |
+| `core/policy.py` | Budget-constrained ROI targeting, outcome-based valuation; no modeling logic |
+| `core/pipeline.py` | Database → split → train → store, as one command |
+| `validation/` | Oracle evaluation, the multi-seed harness, and the slow statistical tests |
+| `app/` | Streamlit simulator: presentation only, every number comes from the modules above |
+| `reports/` | The standing validation report, stamped with the commit that produced it |
 
-## Why this exists
+## Testing
 
-This is a portfolio project demonstrating causal-inference-based targeting as distinct
-from standard propensity/response modeling — the gap between "who will convert" and
-"who converts *because of* the intervention," and why that gap has real budget
-consequences.
+- **Fast suite (CI on Python 3.12):** 114 tests. They cover the simulator, closed-form
+  tests of each learner's arithmetic with deterministic stand-in models, the exact
+  `causalml` cross-check, and database round-trips with foreign keys enforced.
+- **App and pipeline tests:** Streamlit `AppTest` runs the full page against a freshly
+  seeded and trained database. A pipeline test proves the database path gives
+  bit-identical predictions to training in memory.
+- **Slow suite:** 8 statistical tests. They assert only the claims that held in *every*
+  run of the harness; claims that held in fewer runs are reported, not asserted, so the
+  suite does not encode luck.
+
+## Limitations
+
+- **Simulated data.** Every conclusion holds for this simulator's design and is not a
+  claim about any real market. Only `historical_spend` carries segment signal (region,
+  device and signup date are noise), and effects are constant within a segment.
+- **The incentive changes whether someone converts, never basket size.** Revenue per
+  conversion does not depend on treatment. On real data that should be checked, and the
+  revenue model fitted on treated converters if it fails.
+- **One period, no interference.** Users don't affect each other (SUTVA), and cashback
+  is the only cost.
+- **Untuned base learners.** Default gradient boosting, with no hyperparameter search
+  or probability calibration.
+- **Underpowered holdout.** As finding 6 says, outcome-based validation on 10k users
+  cannot separate close models or policies. A real deployment needs much larger
+  holdouts, or pooled pilots.
+
+## FAQ
+
+**Why not just predict who will convert?** Because cashback is paid to everyone treated
+who converts, including people who would have converted anyway. In the simulator, the
+naive model's top decile is 72% sure-things, and its cashback policy loses money at every
+budget tested.
+
+**Why simulate instead of using a public dataset?** Individual treatment effects are
+never observed in real data, so "the model recovered the true uplift" can't be checked
+there. The simulator stores its truth, so every claim is a test, not an assertion. The
+price is that results depend on the simulator's design, so the README states that design
+openly.
+
+**Why T- and X-learners rather than a causal forest or a DR-learner?** Implementing them
+by hand on the same base learner keeps the mechanism visible and the comparison fair.
+The X-learner is the textbook answer to the T-learner's weakness under imbalanced
+treatment, and the harness shows both where that holds (estimation error) and where it
+doesn't (top-decile targeting at 50/50). A doubly robust learner is a natural next
+addition.
+
+**Why rank by ROI instead of by uplift?** Under a spend cap, the best order is
+incremental revenue per unit of cashback: the greedy knapsack order. Revenue per
+conversion cancels out of it. Ranking by plain uplift or by net value did worse at every
+constrained budget tested, because both spend heavily on sure-things.
+
+**Why not report the model's expected revenue?** Because it is inflated by selection.
+The model picks users whose estimated uplift is high, partly because of noise, so
+summing those estimates overstates the gain about 4×. The holdout estimate is unbiased.
+
+**If Qini can't tell the models apart, is it useless?** No. It is unbiased, and on a
+250k-user pilot it ranks targeting rules in the same order as the truth (a slow test).
+It just needs far more data than an oracle does. Report its interval, not a point
+ranking.
+
+**What would production need?** Real pilot data in place of the simulator (the pipeline
+already reads from the database), Postgres via `DATABASE_URL`, spend pacing on realized
+cashback, scheduled retraining, and monitoring of holdout-based value over time.
+
+## Status
+
+| Phase | Scope | |
+|---|---|---|
+| 0–1.5 | Environment and CI, validated config, simulator with ground truth, persisted split | ✅ |
+| 2–4 | Naive baseline and its failure proof, T-learner, X-learner | ✅ |
+| 5 | Qini / AUUC with paired bootstrap CIs, cross-checked against `causalml` | ✅ |
+| 6 | Multi-seed ground-truth validation harness and standing report | ✅ |
+| 7 | Segment revenue, cashback economics, budget-constrained ROI policy | ✅ |
+| 9 | Streamlit policy simulator and this write-up | ✅ |
+| 8 | FastAPI service layer (optional) | not built |
+| 10 | One end-to-end test across seed → pipeline → evaluation → policy → harness | partly covered by pipeline, app and stored-pilot tests |
 
 ## License
 
-TBD.
+[MIT](LICENSE).
