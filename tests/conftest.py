@@ -25,7 +25,7 @@ def engine(tmp_path, monkeypatch):
 @pytest.fixture
 def small_config_path(tmp_path) -> str:
     """The default config shrunk to 2,000 users, written to a temp YAML."""
-    cfg = load_pilot_config("config/default_config.yaml").model_dump()
+    cfg = load_pilot_config().model_dump()
     cfg["n_users"] = 2_000
     path = tmp_path / "small.yaml"
     path.write_text(yaml.safe_dump(cfg), encoding="utf-8")

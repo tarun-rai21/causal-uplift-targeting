@@ -21,6 +21,8 @@ from datetime import datetime, timezone
 import pandas as pd
 from sqlalchemy import text
 
+from core.learners import KNOWN_BASE_LEARNERS
+
 
 def persist_model_run(
     engine,
@@ -42,6 +44,10 @@ def persist_model_run(
     allowed = {"baseline", "t_learner", "x_learner"}
     if model_type not in allowed:
         raise ValueError(f"model_type must be one of {allowed}, got {model_type!r}")
+    if base_learner not in KNOWN_BASE_LEARNERS:
+        raise ValueError(
+            f"base_learner must be one of {KNOWN_BASE_LEARNERS}, got {base_learner!r}"
+        )
     if predictions.empty:
         raise ValueError("predictions is empty; refusing to persist an empty model run")
     if predictions.index.has_duplicates:

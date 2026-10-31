@@ -84,7 +84,7 @@ def test_thin_segment_warns_but_does_not_raise():
 
 
 def test_load_pilot_config_from_default_yaml():
-    cfg = load_pilot_config("config/default_config.yaml")
+    cfg = load_pilot_config()
     assert cfg.n_users > 0
     assert set(cfg.segment_mix.keys()) == set(cfg.segment_effects.keys())
 

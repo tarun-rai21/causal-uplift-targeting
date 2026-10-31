@@ -1,7 +1,7 @@
 $packages = @(
     "python-dotenv", "pandas", "numpy", "scikit-learn", "scipy",
     "SQLAlchemy", "pydantic", "PyYAML", "streamlit", "plotly",
-    "fastapi", "uvicorn", "pytest", "ruff", "causalml"
+    "pytest", "ruff", "causalml"
 )
 
 Write-Host ("{0,-15} {1,-12} {2,-20} {3}" -f "package", "latest", "requires_python", "has_wheel") -ForegroundColor Cyan

@@ -81,7 +81,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import spearmanr
 
-from config.schema import load_pilot_config
+from config.schema import DEFAULT_CONFIG_PATH, load_pilot_config
 from core.baseline import fit_propensity_model, predict_propensity
 from core.data_split import compute_data_split, subset_to_split
 from core.economics import fit_economics
@@ -92,7 +92,7 @@ from core.x_learner import fit_x_learner
 from data_sim.ground_truth import GroundTruth
 from data_sim.pilot_simulator import PilotSimulator
 
-DEFAULT_CONFIG = Path(__file__).resolve().parent.parent / "config" / "default_config.yaml"
+DEFAULT_CONFIG = DEFAULT_CONFIG_PATH
 SCENARIOS = {"balanced": 0.5, "imbalanced": 0.2}  # name -> propensity
 DEPTHS = (0.1, 0.2, 0.3, 0.5)
 MODELS = ("baseline", "t_learner", "x_learner")
