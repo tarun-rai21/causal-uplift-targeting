@@ -1,10 +1,15 @@
 # Causal Uplift Targeting
 
 [![CI](https://github.com/tarun-rai21/causal-uplift-targeting/actions/workflows/ci.yml/badge.svg)](https://github.com/tarun-rai21/causal-uplift-targeting/actions/workflows/ci.yml)
+[![Live demo](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://causal-uplift-targeting.streamlit.app/)
 
 **Who should get the cashback?** This project targets an incentive at the people who
 convert *because of* it, not at the people who would have converted anyway. It then
 proves, against known ground truth, how much that is worth and where it stops working.
+
+**[Try the live demo →](https://causal-uplift-targeting.streamlit.app/)** Vary the budget and cashback rate and see who each model
+targets and what that is really worth. If the app has been asleep, the first load
+rebuilds the demo pilot, which takes a couple of minutes.
 
 ![Streamlit policy simulator: true net revenue by budget for naive, T-learner and X-learner policies, each policy valued honestly against the model's own claim, and the true segments each policy targets](docs/images/policy_simulator.png)
 
